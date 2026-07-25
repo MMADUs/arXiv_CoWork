@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from rag.config import get_settings
 from rag.db.repository import PaperRepository
-from rag.service.s3 import StorageProvider
+from rag.service.storage import StorageProvider
 from rag.service.arxiv.pdf_downloader import PDFDownloader
 from rag.service.arxiv.utils import make_arxiv_id_safe
 
@@ -31,20 +31,22 @@ class PaperDownloadService:
         self.storage = storage
 
     async def download_pdf_to_storage(self, paper_id: UUID) -> str:
-        paper = self.paper_repository.get_by_id(paper_id)
-
-        if paper is None:
-            logger.warning("Paper not found for PDF download: paper_id=%s", paper_id)
-            raise ValueError(f"Paper not found: {paper_id}")
-
-        logger.info(
-            "Downloading paper PDF: paper_id=%s arxiv_id=%s pdf_url=%s",
-            paper.id,
-            paper.arxiv_id,
-            paper.pdf_url,
-        )
-
         try:
+            paper = self.paper_repository.get_by_id(paper_id)
+
+            if paper is None:
+                logger.warning(
+                    "Paper not found for PDF download: paper_id=%s", paper_id
+                )
+                raise ValueError(f"Paper not found: {paper_id}")
+
+            logger.info(
+                "Downloading paper PDF: paper_id=%s arxiv_id=%s pdf_url=%s",
+                paper.id,
+                paper.arxiv_id,
+                paper.pdf_url,
+            )
+
             with TemporaryDirectory() as temp_dir:
                 safe_arxiv_id = make_arxiv_id_safe(paper.arxiv_id)
 
@@ -76,7 +78,10 @@ class PaperDownloadService:
 
             return object_key
 
+        except ValueError:
+            raise
+
         except Exception as error:
             self.session.rollback()
-            logger.exception("Failed paper PDF download: %s", error)
-            raise
+            logger.exception("Failed paper PDF download")
+            raise RuntimeError("Failed paper PDF download") from error

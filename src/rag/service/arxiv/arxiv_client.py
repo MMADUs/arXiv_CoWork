@@ -225,8 +225,8 @@ class ArxivClient:
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as error:
-            logger.exception("Faield to parse arXiv XML response: %s", error)
-            raise
+            logger.exception("Failed to parse arXiv XML response: %s", error)
+            raise ValueError("Invalid arXiv XML response") from error
 
         entries = root.findall("atom:entry", self.xml_namespaces)
 

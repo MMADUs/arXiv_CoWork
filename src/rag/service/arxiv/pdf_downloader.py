@@ -48,7 +48,7 @@ class PDFDownloader:
                 if output_path.exists():
                     output_path.unlink()
 
-                logging.warning("PDF download failed: %s", error)
+                logger.warning("PDF download failed: %s", error)
 
         raise RuntimeError(
             f"Failed to download arXiv PDF paper: {last_error}"

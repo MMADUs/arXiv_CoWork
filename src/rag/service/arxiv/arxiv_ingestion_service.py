@@ -20,7 +20,6 @@ class ArxivIngestionResult:
     papers_fetched: int
     papers_stored: int
     arxiv_ids: list[str]
-    errors: list[str]
 
 
 class ArxivIngestionService:
@@ -49,7 +48,6 @@ class ArxivIngestionService:
                     papers_fetched=0,
                     papers_stored=0,
                     arxiv_ids=[],
-                    errors=[],
                 )
 
             logger.info("Storing arXiv metadata: count=%d", len(papers_metadata))
@@ -68,17 +66,9 @@ class ArxivIngestionService:
                 papers_fetched=len(papers_metadata),
                 papers_stored=len(stored_papers),
                 arxiv_ids=[p.arxiv_id for p in papers_metadata],
-                errors=[],
             )
 
         except Exception as error:
             self.session.rollback()
-            logger.exception("Failed arXiv metadata ingestion: %s", error)
-
-            return ArxivIngestionResult(
-                query=query,
-                papers_fetched=0,
-                papers_stored=0,
-                arxiv_ids=[],
-                errors=[str(error)],
-            )
+            logger.exception("Failed arXiv metadata ingestion")
+            raise RuntimeError("Failed arXiv metadata ingestion") from error
