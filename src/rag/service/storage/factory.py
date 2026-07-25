@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 from rag.config import Settings, get_settings
-from rag.service.s3.interface import StorageProvider
-from rag.service.s3.s3_storage import S3Storage
+from rag.service.storage.interface import StorageProvider
+from rag.service.storage.s3_storage import S3Storage
 
 
 def create_s3_storage(settings: Settings | None = None) -> StorageProvider:

@@ -3,7 +3,7 @@
 
 from fastapi import Request
 
-from rag.service.s3.interface import StorageProvider
+from rag.service.storage.interface import StorageProvider
 
 
 def get_s3_storage(request: Request) -> StorageProvider:
