@@ -19,6 +19,8 @@ class OllamaEmbedding(EmbeddingProvider):
     only accepted one prompt per request and has been superseded.
     """
 
+    provider_name: str = "ollama"
+
     def __init__(self, settings: OllamaEmbeddingSettings) -> None:
         # satisfy interface
         self.model_name = settings.model_name

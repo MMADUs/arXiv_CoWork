@@ -10,6 +10,7 @@ class EmbeddingProvider(ABC):
     this keeps any module that are dependent consistent when switching provider
     """
 
+    provider_name: str
     model_name: str
     dimension: int
 
