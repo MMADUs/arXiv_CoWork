@@ -3,7 +3,7 @@
 
 import logging
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,15 +11,16 @@ from fastapi import FastAPI
 from rag import __version__
 from rag.config import get_settings
 from rag.db.config import create_database
-from rag.service.s3 import create_s3_storage
+from rag.service.storage import create_s3_storage
 
-from rag.routes.health import router as health_router
+from server.routes.arxiv import router as arxiv_router
+from server.routes.health import router as health_router
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
 
     app.state.settings = settings
@@ -53,20 +54,12 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         summary=settings.app_summary,
-        # description=...,
         version=__version__,
         debug=settings.debug,
-        # docs_url=...,
-        # redoc_url=...,
-        # openapi_url=...,
-        # openapi_tags=...,
-        # swagger_ui_parameters=...,
-        # contact=...,
-        # license_info=...,
-        # servers=...,
         lifespan=lifespan,
     )
 
+    app.include_router(router=arxiv_router, prefix=settings.api_prefix)
     app.include_router(router=health_router, prefix=settings.api_prefix)
 
     return app

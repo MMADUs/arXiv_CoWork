@@ -7,10 +7,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from rag.db.config import get_db_session
 from rag.db.model import PaperModel
 from rag.db.repository import PaperRepository
-from rag.routes.arxiv.arxiv_schema import (
+from rag.service.arxiv import ArxivIngestionService, PaperDownloadService
+from rag.service.storage.interface import StorageProvider
+from server.dependencies import get_db_session, get_s3_storage
+from server.routes.arxiv.arxiv_schema import (
     ArxivIngestRequest,
     ArxivIngestResponse,
     CompactPaperResponse,
@@ -21,8 +23,6 @@ from rag.routes.arxiv.arxiv_schema import (
     PaperIngestionItem,
     PaperListResponse,
 )
-from rag.service.arxiv import ArxivIngestionService, PaperDownloadService
-from rag.service.storage import StorageProvider, get_s3_storage
 
 router = APIRouter(prefix="/arxiv", tags=["arxiv"])
 

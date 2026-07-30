@@ -1,7 +1,7 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from rag import __version__
@@ -15,7 +15,7 @@ class HealthResponse(BaseModel):
 
 
 @router.get("/health", response_model=HealthResponse)
-def health_check(request: Request) -> HealthResponse:
+def health_check() -> HealthResponse:
     return HealthResponse(
         status="ok",
         version=__version__,
