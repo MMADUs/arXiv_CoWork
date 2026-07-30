@@ -3,6 +3,8 @@
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -15,11 +17,24 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
+class IngestedPaperResult:
+    paper_id: UUID
+    arxiv_id: str
+    title: str
+    authors: list[str]
+    categories: list[str]
+    published_date: datetime
+    ingestion_status: str
+    pdf_object_key: str | None
+
+
+@dataclass(slots=True)
 class ArxivIngestionResult:
     query: ArxivQueryParams
     papers_fetched: int
     papers_stored: int
     arxiv_ids: list[str]
+    papers: list[IngestedPaperResult]
 
 
 class ArxivIngestionService:
@@ -48,6 +63,7 @@ class ArxivIngestionService:
                     papers_fetched=0,
                     papers_stored=0,
                     arxiv_ids=[],
+                    papers=[],
                 )
 
             logger.info("Storing arXiv metadata: count=%d", len(papers_metadata))
@@ -55,6 +71,7 @@ class ArxivIngestionService:
             stored_papers = self.paper_repository.upsert_many_from_arxiv(
                 papers=papers_metadata
             )
+            self.session.flush()
             self.session.commit()
 
             logger.info(
@@ -66,6 +83,19 @@ class ArxivIngestionService:
                 papers_fetched=len(papers_metadata),
                 papers_stored=len(stored_papers),
                 arxiv_ids=[p.arxiv_id for p in papers_metadata],
+                papers=[
+                    IngestedPaperResult(
+                        paper_id=paper.id,
+                        arxiv_id=paper.arxiv_id,
+                        title=paper.title,
+                        authors=paper.authors,
+                        categories=paper.categories,
+                        published_date=paper.published_date,
+                        ingestion_status=paper.ingestion_status,
+                        pdf_object_key=paper.pdf_object_key,
+                    )
+                    for paper in stored_papers
+                ],
             )
 
         except Exception as error:

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import logging
+import asyncio
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -19,7 +20,8 @@ class PDFDownloader:
 
     def __init__(self, settings: ArxivSettings) -> None:
         self.timeout_seconds = settings.download_timeout_seconds
-        self.max_retries = settings.download_max_retires
+        self.max_retries = settings.download_max_retries
+        self.retry_backoff_seconds = settings.retry_backoff_seconds
 
     async def download_pdf(self, pdf_url: str, output_path: Path) -> None:
         """
@@ -50,9 +52,16 @@ class PDFDownloader:
 
                 logger.warning("PDF download failed: %s", error)
 
+                if attempt < self.max_retries - 1:
+                    await self._wait_before_retry(attempt)
+
         raise RuntimeError(
             f"Failed to download arXiv PDF paper: {last_error}"
         ) from last_error
+
+    async def _wait_before_retry(self, attempt: int) -> None:
+        time_before_retry = self.retry_backoff_seconds * (attempt + 1)
+        await asyncio.sleep(time_before_retry)
 
     async def _download_to_path(self, pdf_url: str, output_path: Path) -> None:
         """

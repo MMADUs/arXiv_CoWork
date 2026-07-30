@@ -5,6 +5,7 @@ from rag.service.arxiv.arxiv_client import ArxivClient
 from rag.service.arxiv.arxiv_ingestion_service import (
     ArxivIngestionService,
     ArxivIngestionResult,
+    IngestedPaperResult,
 )
 
 from rag.service.arxiv.paper_download_service import PaperDownloadService
@@ -15,6 +16,7 @@ __all__ = [
     "ArxivClient",
     "ArxivIngestionService",
     "ArxivIngestionResult",
+    "IngestedPaperResult",
     "PaperDownloadService",
     "make_arxiv_id_safe",
 ]

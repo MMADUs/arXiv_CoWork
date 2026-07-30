@@ -79,6 +79,7 @@ class PaperDownloadService:
             return object_key
 
         except ValueError:
+            self.session.rollback()
             raise
 
         except Exception as error:

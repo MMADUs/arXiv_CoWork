@@ -1,0 +1,19 @@
+info:
+  name: get-papers
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{base_url}}/api/arxiv/papers?output=compact"
+  params:
+    - name: output
+      value: compact
+      type: query
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

@@ -1,0 +1,19 @@
+info:
+  name: get-paper-by-id
+  type: http
+  seq: 1
+
+http:
+  method: GET
+  url: "{{base_url}}/api/arxiv/papers/6592f9fe-1c63-4dab-8bbf-d6fef6e8e025?output=full"
+  params:
+    - name: output
+      value: full
+      type: query
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

@@ -103,7 +103,10 @@ class ArxivClient:
             )
             submitted_to = query.submitted_to or datetime.now(timezone.utc)
 
-            query_date = f"submittedDate: [{format_arxiv_datetime(submitted_from)} TO {format_arxiv_datetime(submitted_to)}]"
+            query_date = (
+                f"submittedDate:[{format_arxiv_datetime(submitted_from)} "
+                f"TO {format_arxiv_datetime(submitted_to)}]"
+            )
             clauses.append(query_date)
 
         search_query = " AND ".join(clauses) if clauses else "all:*"

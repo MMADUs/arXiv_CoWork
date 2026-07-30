@@ -1,0 +1,24 @@
+info:
+  name: ingest-paper
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{base_url}}/api/arxiv/ingest"
+  body:
+    type: json
+    data: |-
+      {
+        "keywords": ["diffusion model"],
+        "categories": ["cs.AI", "cs.LG", "cs.CV"],
+        "max_results": 10,
+        "download_pdf": false
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
