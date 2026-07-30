@@ -1,0 +1,24 @@
+info:
+  name: download-papers-pdf
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{base_url}}/api/arxiv/papers/download-pdfs"
+  body:
+    type: json
+    data: |-
+      {
+        "paper_ids": [
+          "6592f9fe-1c63-4dab-8bbf-d6fef6e8e025",
+          "a3400b78-40f4-45b1-927f-c4e9dd37ed4e"
+        ]
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
