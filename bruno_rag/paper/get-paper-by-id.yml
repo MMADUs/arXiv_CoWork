@@ -5,7 +5,7 @@ info:
 
 http:
   method: GET
-  url: "{{base_url}}/api/arxiv/papers/6592f9fe-1c63-4dab-8bbf-d6fef6e8e025?output=full"
+  url: "{{base_url}}/api/papers/6592f9fe-1c63-4dab-8bbf-d6fef6e8e025?output=full"
   params:
     - name: output
       value: full

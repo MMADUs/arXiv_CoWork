@@ -1,11 +1,11 @@
 info:
-  name: download-papers-pdf
+  name: ingest-paper-pdf
   type: http
   seq: 1
 
 http:
   method: POST
-  url: "{{base_url}}/api/arxiv/papers/download-pdfs"
+  url: "{{base_url}}/api/papers/ingest/pdf"
   body:
     type: json
     data: |-

@@ -51,7 +51,7 @@ class ChunkRepository:
                 end_char=c.end_char,
                 overlap_with_previous=c.overlap_with_previous,
                 overlap_with_next=c.overlap_with_next,
-                source_storage_key=source_object_key,
+                source_object_key=source_object_key,
                 # pending by default
                 embedding_status=ChunkEmbeddingStatus.PENDING,
                 indexing_status=ChunkIndexingStatus.PENDING,
@@ -76,7 +76,7 @@ class ChunkRepository:
         return self.create_from_candidates(
             paper=paper,
             candidates=candidates,
-            source_storage_key=source_object_key,
+            source_object_key=source_object_key,
         )
 
     def list_pending_embeddings(

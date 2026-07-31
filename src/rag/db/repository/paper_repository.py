@@ -29,6 +29,14 @@ class PaperRepository:
         statement = select(PaperModel).where(PaperModel.id == paper_id)
         return self.session.scalar(statement)
 
+    def get_by_id_for_update(self, paper_id: UUID) -> PaperModel | None:
+        statement = (
+            select(PaperModel)
+            .where(PaperModel.id == paper_id)
+            .with_for_update()
+        )
+        return self.session.scalar(statement)
+
     def get_by_arxiv_id(self, arxiv_id: str) -> PaperModel | None:
         statement = select(PaperModel).where(PaperModel.arxiv_id == arxiv_id)
         return self.session.scalar(statement)

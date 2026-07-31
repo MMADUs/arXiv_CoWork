@@ -1,11 +1,11 @@
 info:
-  name: ingest-paper
+  name: ingest-paper-metadata
   type: http
   seq: 1
 
 http:
   method: POST
-  url: "{{base_url}}/api/arxiv/ingest"
+  url: "{{base_url}}/api/papers/ingest"
   body:
     type: json
     data: |-

@@ -4,8 +4,7 @@
 from rag.db.config import (
     DatabaseProvider,
     create_database,
-    get_db_session,
     use_db_session,
 )
 
-__all__ = ["DatabaseProvider", "create_database", "get_db_session", "use_db_session"]
+__all__ = ["DatabaseProvider", "create_database", "use_db_session"]

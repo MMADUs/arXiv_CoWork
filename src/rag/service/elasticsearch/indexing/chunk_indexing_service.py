@@ -66,11 +66,6 @@ class ChunkIndexingService:
         """
         self.elasticsearch_client.ensure_chunk_index()
 
-        paper = self.paper_repository.get_by_id(paper_id)
-
-        if paper is not None:
-            self.paper_repository.mark_indexing_started(paper)
-
         chunks = self.chunk_repository.list_pending_indexing(
             paper_id=paper_id,
             limit=limit,
