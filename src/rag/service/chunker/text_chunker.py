@@ -638,9 +638,14 @@ class TextChunker:
 
         # each chunk includes:
         # title, abstract, section title, and content
+        context_title, context_abstract = self._paper_context(
+            title=title,
+            abstract=abstract,
+        )
+
         text = (
-            f"Title: {title}\n\n"
-            f"Abstract: {abstract}\n\n"
+            f"Title: {context_title}\n\n"
+            f"Abstract: {context_abstract}\n\n"
             f"Section: {section_title or 'Unknown'}\n\n"
             f"Content:\n{normalized_content}"
         )
@@ -665,6 +670,33 @@ class TextChunker:
             overlap_with_previous=overlap_with_previous,
             overlap_with_next=overlap_with_next,
         )
+
+    def _paper_context(self, title: str, abstract: str) -> tuple[str, str]:
+        """
+        cap paper-level context while always prioritizing title before abstract
+        """
+        context_budget = self.settings.max_context_words
+
+        if context_budget <= 0:
+            return "", ""
+
+        title_words = self._truncate_words(title, context_budget)
+        remaining_budget = context_budget - len(title_words.split())
+
+        abstract_words = self._truncate_words(abstract, remaining_budget)
+
+        return title_words, abstract_words
+
+    def _truncate_words(self, text: str, max_words: int) -> str:
+        if max_words <= 0:
+            return ""
+
+        words = text.split()
+
+        if len(words) <= max_words:
+            return text.strip()
+
+        return " ".join(words[:max_words])
 
     def _renumber_chunks(
         self,
