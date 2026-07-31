@@ -10,7 +10,7 @@ from rag.config import get_settings
 from rag.db.config import Base
 
 # REQUIRED IMPORT
-from rag.db.model import PaperModel # noqa: F401
+from rag.db.model import PaperModel, ChunkModel # noqa: F401
 
 config = context.config
 
