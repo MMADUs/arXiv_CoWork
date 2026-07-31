@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from rag.db.model import ChunkModel, PaperModel
+from rag.db.model import ChunkIndexingStatus, ChunkModel, PaperModel
 from rag.db.repository import ChunkRepository, PaperRepository
 from rag.service.embedding import (
     EmbeddingProvider,
@@ -66,6 +66,11 @@ class ChunkIndexingService:
         """
         self.elasticsearch_client.ensure_chunk_index()
 
+        paper = self.paper_repository.get_by_id(paper_id)
+
+        if paper is not None:
+            self.paper_repository.mark_indexing_started(paper)
+
         chunks = self.chunk_repository.list_pending_indexing(
             paper_id=paper_id,
             limit=limit,
@@ -74,6 +79,9 @@ class ChunkIndexingService:
 
         # if no chunk found, nothing to index
         if not chunks:
+            self._finalize_paper_indexing_status(paper_id)
+            self.session.commit()
+
             return ChunkIndexingResult(
                 embedding_model_name=self.embedding_model_name,
                 requested_chunks=0,
@@ -126,6 +134,7 @@ class ChunkIndexingService:
         result.failed_chunks += failed_count
         result.errors.update(errors_by_chunk_id)
 
+        self._finalize_paper_indexing_status(paper_id)
         self.session.commit()
 
         return result
@@ -156,7 +165,7 @@ class ChunkIndexingService:
 
         # start reindexing
         self.paper_repository.mark_indexing_started(paper)
-        
+
         result = await self._index_chunks(eligible_chunks)
 
         response: dict[str, Any] = {
@@ -167,7 +176,7 @@ class ChunkIndexingService:
             "chunks_requested": result.requested_chunks,
             "chunks_indexed": result.indexed_chunks,
             "chunks_failed": result.failed_chunks,
-            "elasticsearch_documents_deleted": delete_result["deleted"],
+            "elasticsearch_documents_deleted": delete_result.deleted,
             "errors": result.errors,
         }
 
@@ -342,6 +351,30 @@ class ChunkIndexingService:
                 )
 
             self.chunk_repository.mark_indexing_failed(chunk, error_message)
+
+    def _finalize_paper_indexing_status(self, paper_id: UUID) -> None:
+        paper = self.paper_repository.get_by_id(paper_id)
+
+        if paper is None:
+            return
+
+        chunks = self.chunk_repository.list_by_paper_id(paper_id)
+
+        if not chunks:
+            self.paper_repository.mark_indexing_skipped(paper)
+            return
+
+        if any(chunk.indexing_status == ChunkIndexingStatus.FAILED for chunk in chunks):
+            self.paper_repository.mark_indexing_failed(paper)
+            return
+
+        if all(
+            chunk.indexing_status == ChunkIndexingStatus.INDEXED for chunk in chunks
+        ):
+            self.paper_repository.mark_indexed(paper)
+            return
+
+        self.paper_repository.mark_indexing_started(paper)
 
     def _build_chunk_document(
         self,

@@ -40,6 +40,8 @@ class PaperParsingService:
         )
 
     def parse_stored_pdf(self, paper_id: UUID) -> dict[str, str]:
+        paper = None
+
         try:
             paper = self.paper_repository.get_by_id(paper_id)
 
@@ -72,7 +74,7 @@ class PaperParsingService:
                     local_path=local_path,
                 )
 
-                logger.info("Parsing PDF from local path: local_path=%s")
+                logger.info("Parsing PDF from local path: local_path=%s", local_path)
                 parsed = self.parser_provider.parse_pdf(local_path)
 
                 json_object_key = f"arxiv/{safe_arxiv_id}/parsed/parsed_document.json"
@@ -102,11 +104,17 @@ class PaperParsingService:
                 "parser_name": parsed.parser_name,
             }
 
-        except ValueError:
+        except ValueError as error:
+            if paper is not None:
+                self.paper_repository.mark_parse_failed(paper, str(error))
+                self.session.commit()
+
             raise
 
         except Exception as error:
-            self.paper_repository.mark_parse_failed(paper, str(error))
-            self.session.commit()
+            if paper is not None:
+                self.paper_repository.mark_parse_failed(paper, str(error))
+                self.session.commit()
+
             logger.exception("Failed paper PDF parsing")
             raise RuntimeError("Failed paper PDF parsing") from error

@@ -10,7 +10,7 @@ from rag.config import ElasticsearchSettings
 from rag.service.elasticsearch.config.mapping import create_chunk_index_mapping
 
 # elasticsearch raw json response type alias
-# because elasticsearch returns a messy json response smh
+# because elasticsearch returns a messy json response
 ESRawJsonResponse: TypeAlias = dict[str, Any]
 
 
@@ -23,11 +23,19 @@ class EnsureIndexResult:
 
 
 @dataclass(slots=True)
+class DeleteIndexResult:
+    index_name: str
+    acknowledged: bool
+    deleted: bool
+    response: ESRawJsonResponse
+
+
+@dataclass(slots=True)
 class InsertedBulkItem:
     id: str
     ok: bool
     status: int
-    error: str
+    error: str | None
 
 
 @dataclass(slots=True)
@@ -37,10 +45,86 @@ class BulkIndexResult:
     items: list[InsertedBulkItem]
 
 
-# @dataclass(slots=True)
-# class DeleteChunkResult:
+@dataclass(slots=True)
+class DeleteChunksByPaperResult:
+    index_name: str
+    exists: bool
+    deleted: int
+    version_conflicts: int = 0
+    failures: list[Any] | None = None
 
-# NOTE: still need to work on this class, because ES response is messy
+
+@dataclass(slots=True)
+class SearchHit:
+    id: str
+    score: float | None
+    source: dict[str, Any]
+    highlights: list[str]
+
+    @property
+    def chunk_id(self) -> str:
+        return str(self.source.get("chunk_id", self.id))
+
+    @property
+    def chunk_text(self) -> str:
+        return str(self.source.get("chunk_text", ""))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "elasticsearch_document_id": self.id,
+            "score": self.score,
+            "highlights": self.highlights,
+            **self.source,
+        }
+
+    @classmethod
+    def from_elasticsearch_hit(cls, hit: dict[str, Any]) -> "SearchHit":
+        highlights: list[str] = []
+
+        for snippets in hit.get("highlight", {}).values():
+            highlights.extend(str(snippet) for snippet in snippets)
+
+        return cls(
+            id=str(hit["_id"]),
+            score=hit.get("_score"),
+            source=dict(hit.get("_source", {})),
+            highlights=highlights,
+        )
+
+
+@dataclass(slots=True)
+class SearchResult:
+    total: int
+    hits: list[SearchHit]
+    raw_response: ESRawJsonResponse
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total": self.total,
+            "items": [hit.to_dict() for hit in self.hits],
+        }
+
+    @classmethod
+    def from_elasticsearch_response(
+        cls,
+        response: ESRawJsonResponse,
+    ) -> "SearchResult":
+        hits_data = response["hits"]
+        total_data = hits_data["total"]
+
+        if isinstance(total_data, dict):
+            total = int(total_data["value"])
+        else:
+            total = int(total_data)
+
+        return cls(
+            total=total,
+            hits=[
+                SearchHit.from_elasticsearch_hit(hit)
+                for hit in hits_data.get("hits", [])
+            ],
+            raw_response=response,
+        )
 
 
 class ElasticsearchClient:
@@ -54,7 +138,7 @@ class ElasticsearchClient:
             "request_timeout": settings.timeout_seconds,
             "retry_on_timeout": True,
             "verify_certs": settings.verify_certs,
-            "ssl_show_warn": True,
+            "ssl_show_warn": settings.ssl_show_warn,
         }
 
         if settings.username and settings.password:
@@ -92,33 +176,37 @@ class ElasticsearchClient:
 
         return dict(response)
 
-    def delete_chunk_index(self) -> ESRawJsonResponse:
+    def delete_chunk_index(self) -> DeleteIndexResult:
         try:
             response = self.client.indices.delete(index=self.chunk_index_name)
 
         except NotFoundError:
-            return {
-                "acknowledged": True,
-                "deleted": False,
-            }
+            return DeleteIndexResult(
+                index_name=self.chunk_index_name,
+                acknowledged=True,
+                deleted=False,
+                response={"acknowledged": True, "deleted": False},
+            )
 
         data = dict(response)
-        data["deleted"] = True
-        return data
+        return DeleteIndexResult(
+            index_name=self.chunk_index_name,
+            acknowledged=bool(data.get("acknowledged", False)),
+            deleted=True,
+            response=data,
+        )
 
-    def ensure_chunk_index(self, force: bool = False) -> dict[str, Any]:
+    def ensure_chunk_index(self, force: bool = False) -> EnsureIndexResult:
         if force:
             self.delete_chunk_index()
 
         if self.chunk_index_exists():
-            # metadata_response = self.update_chunk_index_mapping_metadata()
-
-            return {
-                "index_name": self.chunk_index_name,
-                "created": False,
-                "exists": True,
-                # "mapping_metadata_updated": metadata_response.get("acknowledge", False),
-            }
+            return EnsureIndexResult(
+                index_name=self.chunk_index_name,
+                created=False,
+                exists=True,
+                response={"acknowledged": True, "already_exists": True},
+            )
 
         create_response: ESRawJsonResponse = self.create_chunk_index()
         created = not create_response.get("already_exists", False)
@@ -255,7 +343,7 @@ class ElasticsearchClient:
                     id=str(result.get("_id")),
                     ok=ok,
                     status=int(status),  # wtf is this ??
-                    error=str(result.get("error")),
+                    error=str(result["error"]) if "error" in result else None,
                 )
             )
 
@@ -265,13 +353,14 @@ class ElasticsearchClient:
             items=items,
         )
 
-    def delete_chunks_by_paper(self, paper_id: str) -> dict[str, Any]:
+    def delete_chunks_by_paper(self, paper_id: str) -> DeleteChunksByPaperResult:
         if not self.chunk_index_exists():
-            return {
-                "index_name": self.chunk_index_name,
-                "exists": False,
-                "deleted": 0,
-            }
+            return DeleteChunksByPaperResult(
+                index_name=self.chunk_index_name,
+                exists=False,
+                deleted=0,
+                failures=[],
+            )
 
         data = self.client.delete_by_query(
             index=self.chunk_index_name,
@@ -286,13 +375,13 @@ class ElasticsearchClient:
             },
         )
 
-        return {
-            "index_name": self.chunk_index_name,
-            "exists": True,
-            "deleted": data.get("deleted", 0),
-            "version_conflicts": data.get("version_conflicts", 0),
-            "failures": data.get("failures", []),
-        }
+        return DeleteChunksByPaperResult(
+            index_name=self.chunk_index_name,
+            exists=True,
+            deleted=int(data.get("deleted", 0)),
+            version_conflicts=int(data.get("version_conflicts", 0)),
+            failures=list(data.get("failures", [])),
+        )
 
     # def get_chunks_by_paper(
     #     self,
@@ -341,13 +430,14 @@ class ElasticsearchClient:
 
     #     return chunks
 
-    def search(self, body: dict[str, Any]) -> dict[str, Any]:
-        return dict(
+    def search(self, body: dict[str, Any]) -> SearchResult:
+        response = dict(
             self.client.search(
                 index=self.chunk_index_name,
                 body=body,
             )
         )
+        return SearchResult.from_elasticsearch_response(response)
 
     def close(self) -> None:
         self.client.close()

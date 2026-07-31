@@ -13,14 +13,19 @@ def create_chunk_index_mapping(vector_dimension: int) -> dict[str, Any]:
             "number_of_shards": 1,
             "number_of_replicas": 0,
             "analysis": {
+                # custom pre-processing pipeline
                 "analyzer": {
-                    # custom pre-processing pipeline
-                    "preprocessing_pipeline": {
+                    # original text
+                    "main_text_analyzer": {
                         "type": "custom",
-                        # NOTE: stemmer can hurt scientific papers. (need more research about this)
-                        # lowercase + stopwords + snowball stemmer + tokenize
                         "tokenizer": "standard",
-                        "filter": ["lowercase", "stop", "snowball"],
+                        "filter": ["lowercase", "asciifolding"],
+                    },
+                    # stemmed text
+                    "stemmed_text_analyzer": {
+                        "type": "custom",
+                        "tokenizer": "standard",
+                        "filter": ["lowercase", "asciifolding", "snowball"],
                     }
                 }
             },
@@ -38,16 +43,22 @@ def create_chunk_index_mapping(vector_dimension: int) -> dict[str, Any]:
                 "chunk_index": {"type": "integer"},
                 "chunk_text": {
                     "type": "text",
-                    "analyzer": "preprocessing_pipeline",
+                    "analyzer": "main_text_analyzer",
+                    "fields": {
+                        "stemmed": {
+                            "type": "text",
+                            "analyzer": "stemmed_text_analyzer",
+                        }
+                    },
                 },
                 "chunk_word_count": {"type": "integer"},
                 "section_title": {
                     "type": "text",
-                    "analyzer": "preprocessing_pipeline",
+                    "analyzer": "main_text_analyzer",
                     "fields": {
-                        "keyword": {
-                            "type": "keyword", # extra keyword field
-                            "ignore_above": 256, # ignore above 256 characters
+                        "stemmed": {
+                            "type": "text",
+                            "analyzer": "stemmed_text_analyzer",
                         }
                     },
                 },
@@ -60,27 +71,27 @@ def create_chunk_index_mapping(vector_dimension: int) -> dict[str, Any]:
                 "source_storage_key": {"type": "keyword"},
                 "title": {
                     "type": "text",
-                    "analyzer": "preprocessing_pipeline",
+                    "analyzer": "main_text_analyzer",
                     "fields": {
-                        "keyword": {
-                            "type": "keyword",
-                            "ignore_above": 256,
+                        "stemmed": {
+                            "type": "text",
+                            "analyzer": "stemmed_text_analyzer",
                         }
                     },
                 },
                 "authors": {
                     "type": "text",
-                    "analyzer": "preprocessing_pipeline",
-                    "fields": {
-                        "keyword": {
-                            "type": "keyword",
-                            "ignore_above": 256,
-                        }
-                    },
+                    "analyzer": "main_text_analyzer",
                 },
                 "abstract": {
                     "type": "text",
-                    "analyzer": "preprocessing_pipeline",
+                    "analyzer": "main_text_analyzer",
+                    "fields": {
+                        "stemmed": {
+                            "type": "text",
+                            "analyzer": "stemmed_text_analyzer",
+                        }
+                    },
                 },
                 "categories": {"type": "keyword"},
                 "published_date": {"type": "date"},
