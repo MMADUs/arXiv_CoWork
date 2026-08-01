@@ -1,12 +1,13 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-from typing import Any
+from time import perf_counter
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from rag.config import TransformersRerankerSettings
+from rag.service.elasticsearch.config import SearchHit
 from rag.service.reranker.interface import (
     RerankCandidate,
     RerankResult,
@@ -26,7 +27,7 @@ class TransformersReranker(RerankerProvider):
     provider_name = "huggingface_transformers"
 
     def __init__(self, settings: TransformersRerankerSettings) -> None:
-        self.device = settings.device
+        self.device = self._resolve_device(settings.device)
         self.model_name = settings.model_name
         self.max_length = settings.max_length
 
@@ -38,7 +39,7 @@ class TransformersReranker(RerankerProvider):
                 self.model_name,
                 torch_dtype=torch.float16,
             )
-            .to(settings.device)
+            .to(self.device)
             .eval()
         )
 
@@ -51,19 +52,21 @@ class TransformersReranker(RerankerProvider):
     async def rerank(
         self,
         query: str,
-        chunks: list[dict[str, Any]],
+        chunks: list[SearchHit],
         top_k: int,
     ) -> RerankResult:
         if not chunks:
             return RerankResult(
                 provider=self.provider_name,
                 model_name=self.model_name,
+                reranked_candidates=[],
                 latency_ms=None,
-                reranked_chunks=[],
             )
 
+        started_at = perf_counter()
+
         pairs = [
-            f"<Instruct>: {_INSTRUCTION}\n<Query>: {query}\n<Document>: {chunk.get('chunk_text', '')}"
+            f"<Instruct>: {_INSTRUCTION}\n<Query>: {query}\n<Document>: {chunk.chunk_text}"
             for chunk in chunks
         ]
 
@@ -80,17 +83,16 @@ class TransformersReranker(RerankerProvider):
         reranked_candidate: list[RerankCandidate] = []
 
         for rank, item in enumerate(selected, start=1):
-            chunk = dict(item["chunk"])
-            chunk["reranker_score"] = item["score"]
-            chunk["reranker_rank"] = rank
+            chunk = item["chunk"]
 
             reranked_candidate.append(
                 RerankCandidate(
-                    chunk_id=item["chunk"]["chunk_id"],
+                    chunk_id=chunk.chunk_id,
                     chunk=chunk,
                     original_rank=item["original_rank"],
-                    original_score=item["chunk"].get("score"),
+                    original_score=chunk.score,
                     reranker_score=item["score"],
+                    final_score=item["score"],
                     final_rank=rank,
                 )
             )
@@ -98,9 +100,15 @@ class TransformersReranker(RerankerProvider):
         return RerankResult(
             provider=self.provider_name,
             model_name=self.model_name,
-            latency_ms=None,
-            reranked_chunks=reranked_candidate,
+            reranked_candidates=reranked_candidate,
+            latency_ms=(perf_counter() - started_at) * 1000,
         )
+
+    def _resolve_device(self, configured_device: str) -> str:
+        if configured_device == "auto":
+            return "cuda" if torch.cuda.is_available() else "cpu"
+
+        return configured_device
 
     @torch.no_grad()
     def _score(self, pairs: list[str]) -> list[float]:
