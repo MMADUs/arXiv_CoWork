@@ -6,11 +6,12 @@ from typing import Any
 
 
 class ElasticsearchQueryBuilder:
-    """ 
+    """
     `ElasticsearchQueryBuilder` is responsible to construct the elasticsearch query
 
     since the query is pretty complicated, its best to make its own class
     """
+
     def __init__(
         self,
         categories: list[str] | None = None,
@@ -27,19 +28,23 @@ class ElasticsearchQueryBuilder:
         self.track_total_hits = track_total_hits
         self.min_score = min_score
 
+        self._validate_filters()
+
     def bm25(
         self,
         query: str,
         size: int,
         offset: int,
         latest_first: bool = False,
+        fuzziness: str | None = None,
+        include_highlights: bool = True,
     ) -> dict[str, Any]:
         request_body = self._base_body(size=size, offset=offset)
 
         request_body["query"] = {
             "bool": {
                 "must": (
-                    [self._bm25_query(query)]
+                    [self._bm25_query(query, fuzziness=fuzziness)]
                     if query.strip()
                     else [
                         {
@@ -50,7 +55,9 @@ class ElasticsearchQueryBuilder:
                 "filter": self._filters(),
             }
         }
-        request_body["highlight"] = self._highlight_config()
+
+        if include_highlights:
+            request_body["highlight"] = self._highlight_config()
 
         if latest_first:
             request_body["sort"] = [
@@ -69,9 +76,16 @@ class ElasticsearchQueryBuilder:
         query_vector: list[float],
         size: int,
         offset: int,
+        candidate_pool_size: int | None = None,
         num_candidates: int | None = None,
     ) -> dict[str, Any]:
-        k = size + offset
+        self._validate_query_vector(query_vector)
+
+        k = self._candidate_pool_size(
+            size=size,
+            offset=offset,
+            candidate_pool_size=candidate_pool_size,
+        )
 
         request_body = self._base_body(size=size, offset=offset)
 
@@ -102,8 +116,43 @@ class ElasticsearchQueryBuilder:
         rank_window_size: int,
         rank_constant: int = 60,
         num_candidates: int | None = None,
+        fuzziness: str | None = None,
+        include_highlights: bool = True,
     ) -> dict[str, Any]:
+        self._validate_query_vector(query_vector)
+        self._validate_rank_window_size(
+            rank_window_size=rank_window_size,
+            size=size,
+            offset=offset,
+        )
+
         k = rank_window_size
+        filters = self._filters()
+
+        standard_query: dict[str, Any] = {
+            "bool": {
+                "must": (
+                    [self._bm25_query(query, fuzziness=fuzziness)]
+                    if query.strip()
+                    else [{"match_all": {}}]
+                ),
+                "filter": filters,
+            }
+        }
+
+        knn_retriever: dict[str, Any] = {
+            "field": "embedding",
+            "query_vector": query_vector,
+            "k": k,
+            "num_candidates": num_candidates or max(100, k),
+        }
+
+        if filters:
+            knn_retriever["filter"] = {
+                "bool": {
+                    "filter": filters,
+                }
+            }
 
         request_body = self._base_body(size=size, offset=offset)
 
@@ -112,40 +161,26 @@ class ElasticsearchQueryBuilder:
                 "retrievers": [
                     {
                         "standard": {
-                            "query": {
-                                "bool": {
-                                    "must": (
-                                        [self._bm25_query(query)]
-                                        if query.strip()
-                                        else [{"match_all": {}}]
-                                    )
-                                }
-                            }
+                            "query": standard_query,
                         }
                     },
                     {
-                        "knn": {
-                            "field": "embedding",
-                            "query_vector": query_vector,
-                            "k": k,
-                            "num_candidates": num_candidates or max(100, k),
-                        }
+                        "knn": knn_retriever,
                     },
                 ],
                 "rank_window_size": rank_window_size,
                 "rank_constant": rank_constant,
             }
         }
-        request_body["highlisht"] = self._highlight_config()
 
-        filters = self._filters()
-
-        if filters:
-            request_body["retriever"]["rrf"]["filter"] = filters
+        if include_highlights:
+            request_body["highlight"] = self._highlight_config()
 
         return request_body
 
     def _base_body(self, size: int, offset: int) -> dict[str, Any]:
+        self._validate_pagination(size=size, offset=offset)
+
         body: dict[str, Any] = {
             "from": offset,
             "size": size,
@@ -158,22 +193,25 @@ class ElasticsearchQueryBuilder:
 
         return body
 
-    def _bm25_query(self, query: str) -> dict[str, Any]:
+    def _bm25_query(self, query: str, fuzziness: str | None) -> dict[str, Any]:
         multi_match: dict[str, Any] = {
             "query": query,
             "fields": [
                 "title^4",
+                "title.stemmed^2",
                 "abstract^2",
+                "abstract.stemmed",
                 "section_title^1.5",
+                "section_title.stemmed",
                 "chunk_text",
+                "chunk_text.stemmed",
             ],
             "type": "best_fields",
             "operator": "or",
         }
 
-        if not self._is_short_technical_query(query):
-            multi_match["fuzziness"] = "AUTO"
-            multi_match["prefix_length"] = 2
+        if fuzziness is not None:
+            multi_match["fuzziness"] = fuzziness
 
         return {
             "multi_match": multi_match,
@@ -205,7 +243,7 @@ class ElasticsearchQueryBuilder:
         if self.published_from is not None:
             date_range["gte"] = self.published_from.isoformat()
 
-        if self.published_from is not None:
+        if self.published_to is not None:
             date_range["lte"] = self.published_to.isoformat()
 
         if date_range:
@@ -220,6 +258,9 @@ class ElasticsearchQueryBuilder:
         return filters
 
     def _highlight_config(self) -> dict[str, Any]:
+        """
+        highlight matching keyword from searched document
+        """
         return {
             "pre_tags": ["<mark>"],
             "post_tags": ["</mark>"],
@@ -270,6 +311,50 @@ class ElasticsearchQueryBuilder:
             "indexed_at",
         ]
 
-    def _is_short_technical_query(self, query: str) -> bool:
-        normalized = query.strip().upper()
-        return normalized in {"AI", "ML", "NN", "CV", "NLP", "RAG", "LLM"}
+    def _candidate_pool_size(
+        self,
+        size: int,
+        offset: int,
+        candidate_pool_size: int | None,
+    ) -> int:
+        minimum = size + offset
+
+        if candidate_pool_size is None:
+            return minimum
+
+        if candidate_pool_size < minimum:
+            raise ValueError(
+                "candidate_pool_size must be greater than or equal to size + offset"
+            )
+
+        return candidate_pool_size
+
+    def _validate_filters(self) -> None:
+        if (
+            self.published_from is not None
+            and self.published_to is not None
+            and self.published_from > self.published_to
+        ):
+            raise ValueError("published_from must be before or equal to published_to")
+
+    def _validate_pagination(self, size: int, offset: int) -> None:
+        if size < 1:
+            raise ValueError("size must be greater than 0")
+
+        if offset < 0:
+            raise ValueError("offset must be greater than or equal to 0")
+
+    def _validate_query_vector(self, query_vector: list[float]) -> None:
+        if not query_vector:
+            raise ValueError("query_vector must not be empty")
+
+    def _validate_rank_window_size(
+        self,
+        rank_window_size: int,
+        size: int,
+        offset: int,
+    ) -> None:
+        if rank_window_size < size + offset:
+            raise ValueError(
+                "rank_window_size must be greater than or equal to size + offset"
+            )
