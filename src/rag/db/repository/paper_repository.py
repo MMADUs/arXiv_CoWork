@@ -91,7 +91,9 @@ class PaperRepository:
         )
         existing_paper.doi = arxiv_paper.doi
 
-        existing_paper.ingestion_status = PaperIngestionStatus.METADATA_FETCHED
+        if existing_paper.pdf_object_key is None:
+            existing_paper.ingestion_status = PaperIngestionStatus.METADATA_FETCHED
+
         existing_paper.updated_at = datetime.now(timezone.utc)
 
         return existing_paper
@@ -111,9 +113,73 @@ class PaperRepository:
         """
         paper.pdf_object_key = pdf_object_key
         paper.ingestion_status = PaperIngestionStatus.PDF_STORED
+        paper.pdf_download_error = None
         paper.updated_at = datetime.now(timezone.utc)
 
         return paper
+
+    def mark_pdf_download_started(self, paper: PaperModel) -> PaperModel:
+        paper.ingestion_status = PaperIngestionStatus.PDF_DOWNLOADING
+        paper.pdf_download_error = None
+        paper.updated_at = datetime.now(timezone.utc)
+
+        return paper
+
+    def mark_pdf_download_failed(
+        self,
+        paper: PaperModel,
+        error: str,
+    ) -> PaperModel:
+        paper.ingestion_status = PaperIngestionStatus.PDF_FAILED
+        paper.pdf_download_error = error
+        paper.updated_at = datetime.now(timezone.utc)
+
+        return paper
+
+    def list_pending_pdf_downloads(
+        self,
+        limit: int = 50,
+        include_failed: bool = False,
+    ) -> list[PaperModel]:
+        statuses = [PaperIngestionStatus.METADATA_FETCHED]
+
+        if include_failed:
+            statuses.append(PaperIngestionStatus.PDF_FAILED)
+
+        statement = (
+            select(PaperModel)
+            .where(PaperModel.pdf_object_key.is_(None))
+            .where(PaperModel.ingestion_status.in_(statuses))
+            .order_by(PaperModel.updated_at.asc(), PaperModel.created_at.asc())
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+
+        return list(self.session.scalars(statement))
+
+    def list_pending_indexing_papers(
+        self,
+        limit: int = 50,
+        include_failed: bool = False,
+    ) -> list[PaperModel]:
+        statuses = [
+            PaperIndexingStatus.PENDING,
+            PaperIndexingStatus.CHUNKED,
+        ]
+
+        if include_failed:
+            statuses.append(PaperIndexingStatus.FAILED)
+
+        statement = (
+            select(PaperModel)
+            .where(PaperModel.pdf_object_key.is_not(None))
+            .where(PaperModel.indexing_status.in_(statuses))
+            .order_by(PaperModel.updated_at.asc(), PaperModel.created_at.asc())
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+
+        return list(self.session.scalars(statement))
 
     def mark_parsed(
         self,

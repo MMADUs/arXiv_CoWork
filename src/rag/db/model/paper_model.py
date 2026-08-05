@@ -16,8 +16,10 @@ from rag.db.config import Base
 class PaperIngestionStatus(StrEnum):
     PENDING = "pending"
     METADATA_FETCHED = "metadata_fetched"
+    METADATA_FAILED = "metadata_failed"
+    PDF_DOWNLOADING = "pdf_downloading"
     PDF_STORED = "pdf_stored"
-    FAILED = "failed"
+    PDF_FAILED = "pdf_failed"
 
 
 class PaperParserStatus(StrEnum):
@@ -58,6 +60,7 @@ class PaperModel(Base):
 
     # object key from storage
     pdf_object_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pdf_download_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     parsed_json_object_key: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # identify which parser tool is used to parse pdf to text
