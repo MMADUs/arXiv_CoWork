@@ -4,7 +4,19 @@
 from rag.config import get_settings
 
 from worker.celery_app import celery_app
-from worker.payloads import PaperIndexingPayload
+from worker.payloads import PaperIndexingPayload, PaperPdfDownloadPayload
+
+
+def enqueue_paper_pdf_download(payload: PaperPdfDownloadPayload) -> str:
+    celery_settings = get_settings().celery_settings
+
+    result = celery_app.signature(
+        "worker.tasks.download_paper_pdf",
+        args=[payload.to_task_payload()],
+        queue=celery_settings.pdf_download_queue,
+    ).apply_async()
+
+    return str(result.id)
 
 
 def enqueue_paper_indexing_workflow(payload: PaperIndexingPayload) -> str:

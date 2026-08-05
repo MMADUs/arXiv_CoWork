@@ -50,6 +50,16 @@ def mark_paper_indexing_failed(paper_id: UUID) -> None:
             session.commit()
 
 
+def mark_paper_pdf_download_failed(paper_id: UUID, error: str) -> None:
+    with worker_db_session(settings) as session:
+        paper_repository = PaperRepository(session)
+        paper = paper_repository.get_by_id(paper_id)
+
+        if paper is not None:
+            paper_repository.mark_pdf_download_failed(paper, error)
+            session.commit()
+
+
 def _retry_countdown(task: Task) -> int:
     retry_number = int(getattr(task.request, "retries", 0)) + 1
     countdown = celery_settings.retry_backoff_seconds * (2 ** (retry_number - 1))

@@ -20,6 +20,16 @@ class PaperIndexingPayload(BaseModel):
         return data
 
 
+class PaperPdfDownloadPayload(BaseModel):
+    paper_id: UUID
+    force_download: bool = False
+
+    def to_task_payload(self) -> dict[str, object]:
+        data = self.model_dump()
+        data["paper_id"] = str(self.paper_id)
+        return data
+
+
 class StageResult(BaseModel):
     stage: str
     skipped: bool = False
