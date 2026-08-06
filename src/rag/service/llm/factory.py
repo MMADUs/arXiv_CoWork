@@ -6,7 +6,7 @@ from rag.service.llm.interface import LLMProvider
 from rag.service.llm.ollama import OllamaLLMProvider
 
 
-def create_llm_provider(settings: Settings | None) -> LLMProvider:
+def create_llm_provider(settings: Settings | None = None) -> LLMProvider:
     settings = settings or get_settings()
 
     return OllamaLLMProvider(settings=settings.llm_settings)

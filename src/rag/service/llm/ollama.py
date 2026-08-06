@@ -83,39 +83,73 @@ class OllamaLLMProvider(LLMProvider):
         payload = self._make_payload(prompt=prompt, settings=settings, stream=True)
 
         self.last_stream_usage = None
+        yielded_any = False
+        last_exc: Exception | None = None
 
-        try:
-            async with self._client.stream(
-                "POST", f"{self.base_url}/api/generate", json=payload
-            ) as response:
-                response.raise_for_status()
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with self._client.stream(
+                    "POST", f"{self.base_url}/api/generate", json=payload
+                ) as response:
+                    response.raise_for_status()
 
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
 
-                    data = json.loads(line)
+                        try:
+                            data = json.loads(line)
 
-                    if data.get("done"):
-                        self.last_stream_usage = self._make_usage_metadata(data)
-                        continue
+                        except json.JSONDecodeError as error:
+                            raise LLMResponseError(
+                                f"Ollama stream returned malformed JSON: {line}"
+                            ) from error
 
-                    text = data.get("response")
-                    if isinstance(text, str) and text:
-                        yield text
+                        if data.get("done"):
+                            self.last_stream_usage = self._make_usage_metadata(data)
+                            continue
 
-        except httpx.TimeoutException as error:
-            raise LLMTimeoutError(f"Ollama stream timed out: {error}") from error
+                        text = data.get("response")
+                        if isinstance(text, str) and text:
+                            yielded_any = True
+                            yield text
 
-        except httpx.ConnectError as error:
-            raise LLMConnectionError(
-                f"Could not connect to Ollama at {self.base_url}: {error}"
-            ) from error
+                return
 
-        except httpx.HTTPStatusError as error:
-            raise LLMResponseError(
-                f"Ollama returned {error.response.status_code}: {error.response.text}"
-            ) from error
+            except httpx.ConnectError as error:
+                last_exc = LLMConnectionError(
+                    f"Could not connect to Ollama at {self.base_url}: {error}"
+                )
+
+            except httpx.TimeoutException as error:
+                last_exc = LLMTimeoutError(f"Ollama stream timed out: {error}")
+
+            except httpx.HTTPStatusError as error:
+                last_exc = LLMResponseError(
+                    f"Ollama returned {error.response.status_code}: {error.response.text}"
+                )
+
+            except LLMResponseError as error:
+                last_exc = error
+
+            if yielded_any or attempt >= self.max_retries:
+                assert last_exc is not None
+                raise last_exc
+
+            backoff = self.retry_backoff_seconds * (2**attempt)
+
+            logger.warning(
+                "Ollama stream failed before yielding tokens (attempt %d/%d), retrying in %.1fs: %s",
+                attempt + 1,
+                self.max_retries + 1,
+                backoff,
+                last_exc,
+            )
+
+            await asyncio.sleep(backoff)
+
+        assert last_exc is not None
+        raise last_exc
 
     async def _post_with_retries(
         self, path: str, payload: dict[str, Any]

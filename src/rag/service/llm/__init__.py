@@ -8,7 +8,6 @@ from rag.service.llm.interface import (
     LLMUsageMetadata,
 )
 from rag.service.llm.factory import create_llm_provider
-from rag.service.llm.dependency import get_llm_provider
 
 __all__ = [
     "LLMProvider",
@@ -16,5 +15,4 @@ __all__ = [
     "LLMGenerationResult",
     "LLMUsageMetadata",
     "create_llm_provider",
-    "get_llm_provider",
 ]

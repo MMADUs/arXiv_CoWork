@@ -20,7 +20,7 @@ class LLMGenerationSettings:
     # max context: prompt + query + response
     num_ctx: int = 4096
     # stop tokens
-    stop: str
+    stop: str | list[str] | None = None
 
     # hardware settings
     keep_alive: str | int = "10m"
@@ -52,6 +52,18 @@ class LLMProvider(ABC):
     model_name: str
 
     @abstractmethod
+    async def close(self) -> None:
+        """
+        close provider resources
+        """
+
+    @abstractmethod
+    async def health_check(self) -> bool:
+        """
+        check provider backend availability
+        """
+
+    @abstractmethod
     async def generate(
         self, prompt: str, settings: LLMGenerationSettings
     ) -> LLMGenerationResult:
@@ -60,7 +72,7 @@ class LLMProvider(ABC):
         """
 
     @abstractmethod
-    def stream(
+    async def stream(
         self, prompt: str, settings: LLMGenerationSettings
     ) -> AsyncIterator[str]:
         """
