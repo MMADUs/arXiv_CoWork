@@ -1,7 +1,6 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-import asyncio
 from typing import Any
 
 from celery import Task
@@ -9,7 +8,7 @@ from celery import Task
 from rag.service.elasticsearch import ChunkIndexingService
 from worker.celery_app import celery_app
 from worker.payloads import PaperIndexingPayload
-from worker.resources import indexing_resources
+from worker.resources import indexing_resources, worker_async_run
 from worker.tasks.common import (
     RetryableStageError,
     celery_settings,
@@ -28,7 +27,7 @@ def index_paper_chunks(self: Task, payload: dict[str, Any]) -> dict[str, Any]:
     task_payload = PaperIndexingPayload.model_validate(payload)
 
     try:
-        result = asyncio.run(_index_paper_chunks(self, task_payload))
+        result = worker_async_run(_index_paper_chunks(self, task_payload))
 
     except ValueError as error:
         mark_paper_indexing_failed(task_payload.paper_id)
@@ -77,59 +76,55 @@ async def _index_paper_chunks(
         embedding_provider,
         elasticsearch_client,
     ):
-        try:
-            service = ChunkIndexingService(
-                session=session,
-                embedding_provider=embedding_provider,
-                elasticsearch_client=elasticsearch_client,
-            )
+        service = ChunkIndexingService(
+            session=session,
+            embedding_provider=embedding_provider,
+            elasticsearch_client=elasticsearch_client,
+        )
 
-            if task_payload.force_reindex:
-                result = await service.reindex_paper(task_payload.paper_id)
-                return {
-                    "batches": 1,
-                    "requested_chunks": result["chunks_requested"],
-                    "indexed_chunks": result["chunks_indexed"],
-                    "failed_chunks": result["chunks_failed"],
-                    "errors": result["errors"],
-                    "force_reindex": True,
-                }
-
-            batches = 0
-            requested_chunks = 0
-            indexed_chunks = 0
-            failed_chunks = 0
-            errors: dict[str, str] = {}
-
-            while True:
-                result = await service.index_pending_chunks(
-                    paper_id=task_payload.paper_id,
-                    limit=task_payload.batch_size,
-                    include_failed=include_failed_chunks,
-                )
-
-                if result.requested_chunks == 0:
-                    break
-
-                batches += 1
-                requested_chunks += result.requested_chunks
-                indexed_chunks += result.indexed_chunks
-                failed_chunks += result.failed_chunks
-                errors.update({str(key): value for key, value in result.errors.items()})
-
-                if result.failed_chunks:
-                    break
-
-                include_failed_chunks = False
-
+        if task_payload.force_reindex:
+            result = await service.reindex_paper(task_payload.paper_id)
             return {
-                "batches": batches,
-                "requested_chunks": requested_chunks,
-                "indexed_chunks": indexed_chunks,
-                "failed_chunks": failed_chunks,
-                "errors": errors,
-                "force_reindex": False,
+                "batches": 1,
+                "requested_chunks": result["chunks_requested"],
+                "indexed_chunks": result["chunks_indexed"],
+                "failed_chunks": result["chunks_failed"],
+                "errors": result["errors"],
+                "force_reindex": True,
             }
 
-        finally:
-            await embedding_provider.close()
+        batches = 0
+        requested_chunks = 0
+        indexed_chunks = 0
+        failed_chunks = 0
+        errors: dict[str, str] = {}
+
+        while True:
+            result = await service.index_pending_chunks(
+                paper_id=task_payload.paper_id,
+                limit=task_payload.batch_size,
+                include_failed=include_failed_chunks,
+            )
+
+            if result.requested_chunks == 0:
+                break
+
+            batches += 1
+            requested_chunks += result.requested_chunks
+            indexed_chunks += result.indexed_chunks
+            failed_chunks += result.failed_chunks
+            errors.update({str(key): value for key, value in result.errors.items()})
+
+            if result.failed_chunks:
+                break
+
+            include_failed_chunks = False
+
+        return {
+            "batches": batches,
+            "requested_chunks": requested_chunks,
+            "indexed_chunks": indexed_chunks,
+            "failed_chunks": failed_chunks,
+            "errors": errors,
+            "force_reindex": False,
+        }

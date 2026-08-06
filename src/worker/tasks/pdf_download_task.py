@@ -1,7 +1,6 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-import asyncio
 from typing import Any
 
 from celery import Task
@@ -10,7 +9,7 @@ from rag.db.repository import PaperRepository
 from rag.service.arxiv import PaperDownloadService
 from worker.celery_app import celery_app
 from worker.payloads import PaperPdfDownloadPayload
-from worker.resources import worker_session
+from worker.resources import pdf_download_resources, worker_async_run
 from worker.tasks.common import (
     RetryableStageError,
     celery_settings,
@@ -29,7 +28,7 @@ def download_paper_pdf(self: Task, payload: dict[str, Any]) -> dict[str, Any]:
     task_payload = PaperPdfDownloadPayload.model_validate(payload)
 
     try:
-        return asyncio.run(_download_paper_pdf(task_payload))
+        return worker_async_run(_download_paper_pdf(task_payload))
 
     except ValueError as error:
         mark_paper_pdf_download_failed(task_payload.paper_id, str(error))
@@ -50,7 +49,7 @@ def download_paper_pdf(self: Task, payload: dict[str, Any]) -> dict[str, Any]:
 async def _download_paper_pdf(
     task_payload: PaperPdfDownloadPayload,
 ) -> dict[str, Any]:
-    with worker_session(settings) as (session, storage):
+    with pdf_download_resources(settings) as (session, storage, pdf_downloader):
         paper_repository = PaperRepository(session)
         paper = paper_repository.get_by_id(task_payload.paper_id)
 
@@ -75,6 +74,7 @@ async def _download_paper_pdf(
         pdf_object_key = await PaperDownloadService(
             session=session,
             storage=storage,
+            pdf_downloader=pdf_downloader,
         ).download_pdf_to_storage(task_payload.paper_id)
 
         return {
