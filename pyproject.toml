@@ -17,6 +17,7 @@ dependencies = [
   "PyMuPDF>=1.24",
   "elasticsearch>=8",
   "redis>=5.0",
+  "celery>=5.4",
 ]
 
 [build-system]
