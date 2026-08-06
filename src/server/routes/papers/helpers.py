@@ -24,6 +24,7 @@ def paper_response(
             pdf_url=paper.pdf_url,
             doi=paper.doi,
             pdf_object_key=paper.pdf_object_key,
+            pdf_download_error=paper.pdf_download_error,
             parsed_json_object_key=paper.parsed_json_object_key,
             parser_name=paper.parser_name,
             parser_error=paper.parser_error,

@@ -1,22 +1,28 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from rag.service.arxiv import ArxivIngestionService
-from rag.service.storage.interface import StorageProvider
-from server.dependencies import get_db_session, get_s3_storage
+from server.dependencies import get_db_session
 from server.routes.ingestion.helpers import (
-    download_papers,
-    failed_download_count,
-    successful_download_count,
+    enqueue_pdf_download_by_id,
+    enqueue_pdf_downloads_for_ingested_papers,
+    enqueue_pending_pdf_downloads,
+    queued_download_count,
+    queued_download_item_count,
+    skipped_download_count,
+    skipped_download_item_count,
 )
 from server.routes.ingestion.schema import (
     ArxivIngestRequest,
     ArxivIngestResponse,
-    DownloadPapersRequest,
-    DownloadPapersResponse,
+    DownloadPaperRequest,
+    DownloadPaperResponse,
+    DownloadPendingPapersRequest,
     PaperIngestionItem,
 )
 
@@ -27,7 +33,6 @@ router = APIRouter(prefix="/papers", tags=["paper-ingestion"])
 async def ingest_arxiv_papers(
     request: ArxivIngestRequest,
     session: Session = Depends(get_db_session),
-    storage: StorageProvider = Depends(get_s3_storage),
 ) -> ArxivIngestResponse:
     ingestion_service = ArxivIngestionService(session)
 
@@ -64,39 +69,94 @@ async def ingest_arxiv_papers(
     ]
 
     if request.download_pdf:
-        papers = await download_papers(
-            paper_ids=[paper.paper_id for paper in papers],
-            session=session,
-            storage=storage,
-        )
+        try:
+            papers = enqueue_pdf_downloads_for_ingested_papers(
+                paper_ids=[paper.paper_id for paper in papers],
+                session=session,
+            )
+
+        except Exception as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Failed to enqueue PDF download tasks: {error}",
+            ) from error
 
     return ArxivIngestResponse(
         papers_fetched=ingestion_result.papers_fetched,
         papers_stored=ingestion_result.papers_stored,
         download_pdf=request.download_pdf,
-        pdfs_downloaded=(
-            successful_download_count(papers) if request.download_pdf else 0
+        pdf_downloads_queued=(
+            queued_download_count(papers) if request.download_pdf else 0
         ),
-        pdfs_failed=failed_download_count(papers) if request.download_pdf else 0,
+        pdf_downloads_skipped=(
+            skipped_download_count(papers) if request.download_pdf else 0
+        ),
         papers=papers,
     )
 
 
-@router.post("/ingest/pdf", response_model=DownloadPapersResponse)
-async def download_arxiv_papers(
-    request: DownloadPapersRequest,
+@router.post(
+    "/download-pdf",
+    response_model=DownloadPaperResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def enqueue_pending_arxiv_paper_pdf_downloads(
+    request: DownloadPendingPapersRequest,
     session: Session = Depends(get_db_session),
-    storage: StorageProvider = Depends(get_s3_storage),
-) -> DownloadPapersResponse:
-    papers = await download_papers(
-        paper_ids=request.paper_ids,
-        session=session,
-        storage=storage,
+) -> DownloadPaperResponse:
+    try:
+        papers = enqueue_pending_pdf_downloads(
+            session=session,
+            limit=request.limit,
+            include_failed=request.include_failed,
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to enqueue PDF download tasks: {error}",
+        ) from error
+
+    return DownloadPaperResponse(
+        requested=len(papers),
+        queued=queued_download_item_count(papers),
+        skipped=skipped_download_item_count(papers),
+        papers=papers,
     )
 
-    return DownloadPapersResponse(
-        requested=len(request.paper_ids),
-        downloaded=successful_download_count(papers),
-        failed=failed_download_count(papers),
-        papers=papers,
+
+@router.post(
+    "/{paper_id}/download-pdf",
+    response_model=DownloadPaperResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def enqueue_arxiv_paper_pdf_download(
+    paper_id: UUID,
+    request: DownloadPaperRequest,
+    session: Session = Depends(get_db_session),
+) -> DownloadPaperResponse:
+    try:
+        item = enqueue_pdf_download_by_id(
+            paper_id=paper_id,
+            session=session,
+            force_download=request.force_download,
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to enqueue PDF download task: {error}",
+        ) from error
+
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Paper not found: {paper_id}",
+        )
+
+    return DownloadPaperResponse(
+        requested=1,
+        queued=1 if item.status == "queued" else 0,
+        skipped=0 if item.status == "queued" else 1,
+        papers=[item],
     )

@@ -80,6 +80,8 @@ class PaperIngestionItem(BaseModel):
     published_date: datetime | None
     ingestion_status: str | None
     pdf_object_key: str | None
+    pdf_download_task_id: str | None = None
+    pdf_download_status: str | None = None
     download_error: str | None = None
 
 
@@ -87,17 +89,32 @@ class ArxivIngestResponse(BaseModel):
     papers_fetched: int
     papers_stored: int
     download_pdf: bool
-    pdfs_downloaded: int
-    pdfs_failed: int
+    pdf_downloads_queued: int
+    pdf_downloads_skipped: int
     papers: list[PaperIngestionItem]
 
 
-class DownloadPapersRequest(BaseModel):
-    paper_ids: list[UUID] = Field(..., min_length=1)
+class DownloadPaperRequest(BaseModel):
+    force_download: bool = False
 
 
-class DownloadPapersResponse(BaseModel):
+class DownloadPendingPapersRequest(BaseModel):
+    limit: int = Field(default=50, ge=1, le=500)
+    include_failed: bool = False
+
+
+class DownloadPaperItem(BaseModel):
+    paper_id: UUID
+    arxiv_id: str
+    title: str
+    ingestion_status: str
+    pdf_object_key: str | None
+    task_id: str | None
+    status: Literal["queued", "already_downloaded", "already_downloading"]
+
+
+class DownloadPaperResponse(BaseModel):
     requested: int
-    downloaded: int
-    failed: int
-    papers: list[PaperIngestionItem]
+    queued: int
+    skipped: int
+    papers: list[DownloadPaperItem]

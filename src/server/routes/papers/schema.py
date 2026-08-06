@@ -29,6 +29,7 @@ class FullPaperResponse(BaseModel):
     pdf_url: str
     doi: str | None
     pdf_object_key: str | None
+    pdf_download_error: str | None
     parsed_json_object_key: str | None
     parser_name: str | None
     parser_error: str | None

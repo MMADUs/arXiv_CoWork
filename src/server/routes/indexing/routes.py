@@ -10,10 +10,49 @@ from rag.db.model import PaperIndexingStatus
 from rag.db.repository import PaperRepository
 
 from server.dependencies import get_db_session
-from server.routes.indexing.helpers import enqueue_indexing_workflow
-from server.routes.indexing.schema import IndexPaperRequest, IndexPaperResponse
+from server.routes.indexing.helpers import (
+    enqueue_indexing_workflow,
+    enqueue_pending_indexing_workflows,
+    queued_index_count,
+    skipped_index_count,
+)
+from server.routes.indexing.schema import (
+    IndexPaperRequest,
+    IndexPaperResponse,
+    IndexPapersResponse,
+    IndexPendingPapersRequest,
+)
 
 router = APIRouter(prefix="/papers", tags=["paper-indexing"])
+
+
+@router.post(
+    "/index",
+    response_model=IndexPapersResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def enqueue_pending_arxiv_paper_indexing(
+    request: IndexPendingPapersRequest,
+    session: Session = Depends(get_db_session),
+) -> IndexPapersResponse:
+    try:
+        papers = enqueue_pending_indexing_workflows(
+            request=request,
+            session=session,
+        )
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to enqueue paper indexing workflows: {error}",
+        ) from error
+
+    return IndexPapersResponse(
+        requested=len(papers),
+        queued=queued_index_count(papers),
+        skipped=skipped_index_count(papers),
+        papers=papers,
+    )
 
 
 @router.post(

@@ -19,3 +19,23 @@ class IndexPaperResponse(BaseModel):
     paper_id: UUID
     task_id: str | None
     status: Literal["queued", "already_indexed"]
+
+
+class IndexPendingPapersRequest(IndexPaperRequest):
+    limit: int = Field(default=50, ge=1, le=500)
+
+
+class IndexPaperItem(BaseModel):
+    paper_id: UUID
+    arxiv_id: str
+    title: str
+    indexing_status: str
+    task_id: str | None
+    status: Literal["queued", "already_indexing", "already_indexed", "no_pdf"]
+
+
+class IndexPapersResponse(BaseModel):
+    requested: int
+    queued: int
+    skipped: int
+    papers: list[IndexPaperItem]
