@@ -18,10 +18,15 @@ class PDFDownloader:
     `PDFDownloader` download PDF file from the given url through http/s
     """
 
-    def __init__(self, settings: ArxivSettings) -> None:
+    def __init__(
+        self,
+        settings: ArxivSettings,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self.timeout_seconds = settings.download_timeout_seconds
         self.max_retries = settings.download_max_retries
         self.retry_backoff_seconds = settings.retry_backoff_seconds
+        self.client = client
 
     async def download_pdf(self, pdf_url: str, output_path: Path) -> None:
         """
@@ -67,16 +72,31 @@ class PDFDownloader:
         """
         Stream GET request, and write bytes to download into output path
         """
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            # stream GET request
-            async with client.stream(method="GET", url=pdf_url) as response:
-                # check http status
-                response.raise_for_status()
+        if self.client is None:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                await self._stream_to_path(client, pdf_url, output_path)
+            return
 
-                # write to output path
-                with output_path.open("wb") as file:
-                    async for chunk in response.aiter_bytes():
-                        file.write(chunk)
+        await self._stream_to_path(self.client, pdf_url, output_path)
+
+    async def _stream_to_path(
+        self,
+        client: httpx.AsyncClient,
+        pdf_url: str,
+        output_path: Path,
+    ) -> None:
+        async with client.stream(method="GET", url=pdf_url) as response:
+            # check http status
+            response.raise_for_status()
+
+            # write to output path
+            with output_path.open("wb") as file:
+                async for chunk in response.aiter_bytes():
+                    file.write(chunk)
+
+    async def close(self) -> None:
+        if self.client is not None:
+            await self.client.aclose()
 
     def _validate_pdf_url(self, pdf_url: str) -> None:
         parsed = urlparse(pdf_url)

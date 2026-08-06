@@ -33,13 +33,18 @@ class ArxivClient:
         "opensearch": "http://a9.com/-/spec/opensearch/1.1/",
     }
 
-    def __init__(self, settings: ArxivSettings) -> None:
+    def __init__(
+        self,
+        settings: ArxivSettings,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self.base_url = settings.base_url
         self.rate_limit_seconds = settings.rate_limit_seconds
         self.max_retries = settings.fetch_max_retries
         self.timeout_seconds = settings.fetch_timeout_seconds
         self.retry_backoff_seconds = settings.retry_backoff_seconds
         self.last_request_at: float | None = None
+        self.client = client
 
     async def fetch_papers(
         self, query: ArxivQueryParams, ignore_version: bool = True
@@ -182,15 +187,8 @@ class ArxivClient:
             self.last_request_at = time.monotonic()
 
             try:
-                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                    logger.info("Fetching arXiv metadata: attempt=%s", attempt + 1)
-                    response = await client.get(url)
-
-                    # raise http status to catch error
-                    response.raise_for_status()
-
-                    # return format is expected in plain XML text
-                    return response.text
+                logger.info("Fetching arXiv metadata: attempt=%s", attempt + 1)
+                return await self._get_xml_text(url)
 
             except httpx.TimeoutException as error:
                 last_error = error
@@ -210,6 +208,26 @@ class ArxivClient:
         raise RuntimeError(
             f"Failed to fetch arXiv papers: {last_error}"
         ) from last_error
+
+    async def _get_xml_text(self, url: str) -> str:
+        if self.client is None:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                return await self._request_xml_text(client, url)
+
+        return await self._request_xml_text(self.client, url)
+
+    async def _request_xml_text(self, client: httpx.AsyncClient, url: str) -> str:
+        response = await client.get(url)
+
+        # raise http status to catch error
+        response.raise_for_status()
+
+        # return format is expected in plain XML text
+        return response.text
+
+    async def close(self) -> None:
+        if self.client is not None:
+            await self.client.aclose()
 
     async def _wait_before_retry(self, attempt: int) -> None:
         """

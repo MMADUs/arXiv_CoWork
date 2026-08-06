@@ -43,10 +43,14 @@ class ArxivIngestionService:
     through `ingest_metadata()` method.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        arxiv_client: ArxivClient | None = None,
+    ) -> None:
         self.settings = get_settings()
         self.session = session
-        self.arxiv_client = ArxivClient(self.settings.arxiv_settings)
+        self.arxiv_client = arxiv_client or ArxivClient(self.settings.arxiv_settings)
         self.paper_repository = PaperRepository(session)
 
     async def ingest_metadata(self, query: ArxivQueryParams) -> ArxivIngestionResult:

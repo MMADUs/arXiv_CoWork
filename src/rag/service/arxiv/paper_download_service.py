@@ -23,11 +23,18 @@ class PaperDownloadService:
     through the `download_pdf_to_storage()` method.
     """
 
-    def __init__(self, session: Session, storage: StorageProvider) -> None:
+    def __init__(
+        self,
+        session: Session,
+        storage: StorageProvider,
+        pdf_downloader: PDFDownloader | None = None,
+    ) -> None:
         self.settings = get_settings()
         self.session = session
         self.paper_repository = PaperRepository(session)
-        self.pdf_downloader = PDFDownloader(self.settings.arxiv_settings)
+        self.pdf_downloader = pdf_downloader or PDFDownloader(
+            self.settings.arxiv_settings
+        )
         self.storage = storage
 
     async def download_pdf_to_storage(self, paper_id: UUID) -> str:
