@@ -17,9 +17,7 @@ class CompactPaperResponse(BaseModel):
     published_date: datetime
 
 
-class FullPaperResponse(BaseModel):
-    paper_id: UUID
-    arxiv_id: str
+class PaperMetadataResponse(BaseModel):
     version: int | None
     title: str
     authors: list[str]
@@ -28,20 +26,53 @@ class FullPaperResponse(BaseModel):
     published_date: datetime
     pdf_url: str
     doi: str | None
+
+
+class PaperArtifactsResponse(BaseModel):
     pdf_object_key: str | None
-    pdf_download_error: str | None
     parsed_json_object_key: str | None
     parser_name: str | None
-    parser_error: str | None
+
+
+class PaperStatusResponse(BaseModel):
     ingestion_status: str
     parser_status: str
+    chunking_status: str
     indexing_status: str
+
+
+class ChunkErrorResponse(BaseModel):
+    stage: Literal["embedding", "indexing"]
+    message: str
+    count: int
+
+
+class PaperErrorsResponse(BaseModel):
+    pdf_download_error: str | None
+    parser_error: str | None
+    chunking_error: str | None
+    indexing_error: str | None
+    chunk_errors: list[ChunkErrorResponse]
+
+
+class PaperTimestampsResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
 
+class FullPaperResponse(BaseModel):
+    paper_id: UUID
+    arxiv_id: str
+    metadata: PaperMetadataResponse
+    artifacts: PaperArtifactsResponse
+    status: PaperStatusResponse
+    errors: PaperErrorsResponse
+    timestamps: PaperTimestampsResponse
+
+
 class PaperListResponse(BaseModel):
     output: Literal["compact", "full"]
+    status: Literal["failed"] | None = None
     count: int
     limit: int
     offset: int

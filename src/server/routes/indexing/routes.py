@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from rag.db.model import PaperIndexingStatus
+from rag.db.model import PaperChunkingStatus, PaperIndexingStatus, PaperParserStatus
 from rag.db.repository import PaperRepository
 
 from server.dependencies import get_db_session
@@ -75,6 +75,18 @@ def enqueue_arxiv_paper_indexing(
             detail=f"Paper not found: {paper_id}",
         )
 
+    if paper.parser_status == PaperParserStatus.PARSING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Paper parsing is already in progress: {paper_id}",
+        )
+
+    if paper.chunking_status == PaperChunkingStatus.CHUNKING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Paper chunking is already in progress: {paper_id}",
+        )
+
     if paper.indexing_status == PaperIndexingStatus.INDEXING:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -97,16 +109,10 @@ def enqueue_arxiv_paper_indexing(
             detail=f"Paper has no stored PDF: {paper_id}",
         )
 
-    paper_repository.mark_indexing_started(paper)
-    session.commit()
-
     try:
         task_id = enqueue_indexing_workflow(paper_id=paper_id, request=request)
 
     except Exception as error:
-        paper_repository.mark_indexing_failed(paper)
-        session.commit()
-
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to enqueue paper indexing workflow: {error}",

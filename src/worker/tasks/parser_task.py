@@ -5,6 +5,7 @@ from typing import Any
 
 from celery import Task
 
+from rag.db.model import PaperParserStatus
 from rag.db.repository import PaperRepository
 from rag.service.parser import PaperParsingService
 
@@ -13,6 +14,7 @@ from worker.payloads import PaperIndexingPayload
 from worker.resources import worker_session
 from worker.tasks.common import (
     RetryableStageError,
+    StagePrerequisiteError,
     celery_settings,
     mark_paper_parse_failed,
     retry_or_fail,
@@ -33,12 +35,20 @@ def parse_paper(self: Task, payload: dict[str, Any]) -> dict[str, Any]:
             paper = PaperRepository(session).get_by_id(task_payload.paper_id)
 
             if paper is None:
-                raise ValueError(f"Paper not found: {task_payload.paper_id}")
+                raise StagePrerequisiteError(
+                    f"Paper not found: {task_payload.paper_id}"
+                )
 
             if paper.pdf_object_key is None:
-                raise ValueError(f"Paper has no stored PDF: {task_payload.paper_id}")
+                raise StagePrerequisiteError(
+                    f"Paper has no stored PDF: {task_payload.paper_id}"
+                )
 
-            if paper.parsed_json_object_key and not task_payload.force_parse:
+            if (
+                paper.parser_status == PaperParserStatus.PARSED
+                and paper.parsed_json_object_key
+                and not task_payload.force_parse
+            ):
                 return {
                     **task_payload.to_task_payload(),
                     "parse": {
@@ -63,6 +73,9 @@ def parse_paper(self: Task, payload: dict[str, Any]) -> dict[str, Any]:
                     "detail": result,
                 },
             }
+
+    except StagePrerequisiteError:
+        raise
 
     except ValueError as error:
         mark_paper_parse_failed(task_payload.paper_id, str(error))

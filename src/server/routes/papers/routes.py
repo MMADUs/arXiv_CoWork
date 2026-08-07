@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from rag.db.repository import PaperRepository
+from rag.db.repository import ChunkRepository, PaperRepository
 from server.dependencies import get_db_session
 from server.routes.papers.helpers import paper_response
 from server.routes.papers.schema import PaperDetailResponse, PaperListResponse
@@ -18,19 +18,41 @@ router = APIRouter(prefix="/papers", tags=["manage-paper"])
 @router.get("", response_model=PaperListResponse)
 def list_arxiv_papers(
     output: Literal["compact", "full"] = "compact",
+    status_filter: Literal["failed"] | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_db_session),
 ) -> PaperListResponse:
     paper_repository = PaperRepository(session)
-    papers = paper_repository.list_recent(limit=limit, offset=offset)
+
+    if status_filter == "failed":
+        papers = paper_repository.list_failed(limit=limit, offset=offset)
+    else:
+        papers = paper_repository.list_recent(limit=limit, offset=offset)
+
+    chunk_errors_by_paper_id = {}
+
+    if output == "full":
+        chunk_errors_by_paper_id = (
+            ChunkRepository(session).list_error_summaries_by_paper_ids(
+                paper.id for paper in papers
+            )
+        )
 
     return PaperListResponse(
         output=output,
+        status=status_filter,
         count=len(papers),
         limit=limit,
         offset=offset,
-        papers=[paper_response(paper, output) for paper in papers],
+        papers=[
+            paper_response(
+                paper=paper,
+                output=output,
+                chunk_errors=chunk_errors_by_paper_id.get(paper.id, []),
+            )
+            for paper in papers
+        ],
     )
 
 
@@ -49,7 +71,18 @@ def get_arxiv_paper(
             detail=f"Paper not found: {paper_id}",
         )
 
+    chunk_errors = []
+
+    if output == "full":
+        chunk_errors = ChunkRepository(session).list_error_summaries_by_paper_ids(
+            [paper.id]
+        ).get(paper.id, [])
+
     return PaperDetailResponse(
         output=output,
-        paper=paper_response(paper, output),
+        paper=paper_response(
+            paper=paper,
+            output=output,
+            chunk_errors=chunk_errors,
+        ),
     )

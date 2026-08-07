@@ -13,8 +13,9 @@ from worker.payloads import PaperIndexingPayload
 from worker.resources import worker_session
 from worker.tasks.common import (
     RetryableStageError,
+    StagePrerequisiteError,
     celery_settings,
-    mark_paper_indexing_failed,
+    mark_paper_chunking_failed,
     retry_or_fail,
     settings,
 )
@@ -36,20 +37,25 @@ def chunk_paper(self: Task, payload: dict[str, Any]) -> dict[str, Any]:
             paper = paper_repository.get_by_id(task_payload.paper_id)
 
             if paper is None:
-                raise ValueError(f"Paper not found: {task_payload.paper_id}")
+                raise StagePrerequisiteError(
+                    f"Paper not found: {task_payload.paper_id}"
+                )
 
             if paper.parsed_json_object_key is None:
-                raise ValueError(
+                raise StagePrerequisiteError(
                     f"Paper has no parsed JSON artifact: {task_payload.paper_id}"
                 )
 
             chunks = chunk_repository.list_by_paper_id(task_payload.paper_id)
-            
+
             should_skip = bool(chunks) and not (
                 task_payload.force_chunk or task_payload.force_parse
             )
 
             if should_skip:
+                paper_repository.mark_chunked(paper)
+                session.commit()
+
                 return {
                     **task_payload.to_task_payload(),
                     "chunk": {
@@ -73,14 +79,22 @@ def chunk_paper(self: Task, payload: dict[str, Any]) -> dict[str, Any]:
                 },
             }
 
+    except StagePrerequisiteError:
+        raise
+
     except ValueError as error:
-        mark_paper_indexing_failed(task_payload.paper_id)
+        mark_paper_chunking_failed(task_payload.paper_id, str(error))
         raise error
 
     except Exception as error:
+        retry_error = RetryableStageError(str(error))
+
         retry_or_fail(
             self,
-            RetryableStageError(str(error)),
-            lambda: mark_paper_indexing_failed(task_payload.paper_id),
+            retry_error,
+            lambda: mark_paper_chunking_failed(
+                task_payload.paper_id,
+                str(retry_error),
+            ),
         )
         raise

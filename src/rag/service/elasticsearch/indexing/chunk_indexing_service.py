@@ -8,7 +8,13 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from rag.db.model import ChunkIndexingStatus, ChunkModel, PaperModel
+from rag.db.model import (
+    ChunkEmbeddingStatus,
+    ChunkIndexingStatus,
+    ChunkModel,
+    PaperChunkingStatus,
+    PaperModel,
+)
 from rag.db.repository import ChunkRepository, PaperRepository
 from rag.service.embedding import (
     EmbeddingProvider,
@@ -64,6 +70,26 @@ class ChunkIndexingService:
         """
         inserting/indexing pending chunks from database to search db
         """
+        paper = self.paper_repository.get_by_id(paper_id)
+
+        if paper is None:
+            return ChunkIndexingResult(
+                embedding_model_name=self.embedding_model_name,
+                requested_chunks=0,
+                indexed_chunks=0,
+                failed_chunks=0,
+                errors={},
+            )
+
+        if paper.chunking_status != PaperChunkingStatus.CHUNKED:
+            return ChunkIndexingResult(
+                embedding_model_name=self.embedding_model_name,
+                requested_chunks=0,
+                indexed_chunks=0,
+                failed_chunks=0,
+                errors={},
+            )
+
         self.elasticsearch_client.ensure_chunk_index()
 
         chunks = self.chunk_repository.list_pending_indexing(
@@ -176,9 +202,12 @@ class ChunkIndexingService:
         }
 
         if not chunks:
-            self.paper_repository.mark_indexing_skipped(paper)
+            self.paper_repository.mark_chunking_skipped(paper)
         elif result.failed_chunks:
-            self.paper_repository.mark_indexing_failed(paper)
+            self.paper_repository.mark_indexing_failed(
+                paper,
+                f"{result.failed_chunks} chunk(s) failed embedding or indexing",
+            )
         else:
             self.paper_repository.mark_indexed(paper)
 
@@ -207,10 +236,6 @@ class ChunkIndexingService:
 
         chunks = [eligible.chunk for eligible in eligible_chunks]
 
-        # initialized `started` indexing status for all chunk
-        for chunk in chunks:
-            self.chunk_repository.mark_indexing_started(chunk)
-
         # embed exactly the chunks we were handed, no re-query
         embedding_result: ChunkEmbeddingResult = (
             await self.chunk_embedding_service.embed_chunks(chunks)
@@ -221,15 +246,6 @@ class ChunkIndexingService:
 
         failed_count += embedding_result.failed_chunks
         errors_by_chunk_id.update(embedding_result.errors)
-
-        # mark failed chunks to embed
-        # this way we can keep track of missing/error chunk embedding
-        # instead of processing directly to the loop of eligible_chunks below
-        self._mark_missing_embeddings_indexing_failed(
-            chunks=chunks,
-            embeddings_by_chunk_id=embeddings_by_chunk_id,
-            errors=embedding_result.errors,
-        )
 
         for eligible in eligible_chunks:
             # extract field
@@ -265,6 +281,9 @@ class ChunkIndexingService:
                 failed_chunks=failed_count,
                 errors=errors_by_chunk_id,
             )
+
+        for chunk in embedded_chunks.values():
+            self.chunk_repository.mark_indexing_started(chunk)
 
         # perform bulk indexing, failure can likely happen
         try:
@@ -323,30 +342,6 @@ class ChunkIndexingService:
             errors=errors_by_chunk_id,
         )
 
-    def _mark_missing_embeddings_indexing_failed(
-        self,
-        chunks: list[ChunkModel],
-        embeddings_by_chunk_id: dict[UUID, list[float]],
-        errors: dict[UUID, str],
-    ) -> None:
-        """
-        mark missing chunk embeddings, as a failed process to embed chunk
-        """
-        for chunk in chunks:
-            # chunk id validation
-            # if chunk id exist in embeddings_by_chunk_id keys (chunk id) = eligible
-            if chunk.id in embeddings_by_chunk_id:
-                continue
-
-            error_message = errors.get(chunk.id)
-
-            if error_message is None:
-                error_message = (
-                    f"{chunk.id}: embedding failed"  # fallback error message
-                )
-
-            self.chunk_repository.mark_indexing_failed(chunk, error_message)
-
     def _finalize_paper_indexing_status(self, paper_id: UUID) -> None:
         paper = self.paper_repository.get_by_id(paper_id)
 
@@ -356,11 +351,21 @@ class ChunkIndexingService:
         chunks = self.chunk_repository.list_by_paper_id(paper_id)
 
         if not chunks:
-            self.paper_repository.mark_indexing_skipped(paper)
+            self.paper_repository.mark_chunking_skipped(paper)
             return
 
-        if any(chunk.indexing_status == ChunkIndexingStatus.FAILED for chunk in chunks):
-            self.paper_repository.mark_indexing_failed(paper)
+        failed_chunk_count = sum(
+            1
+            for chunk in chunks
+            if chunk.embedding_status == ChunkEmbeddingStatus.FAILED
+            or chunk.indexing_status == ChunkIndexingStatus.FAILED
+        )
+
+        if failed_chunk_count:
+            self.paper_repository.mark_indexing_failed(
+                paper,
+                f"{failed_chunk_count} chunk(s) failed embedding or indexing",
+            )
             return
 
         if all(

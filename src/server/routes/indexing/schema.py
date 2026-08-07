@@ -29,9 +29,18 @@ class IndexPaperItem(BaseModel):
     paper_id: UUID
     arxiv_id: str
     title: str
+    parser_status: str
+    chunking_status: str
     indexing_status: str
     task_id: str | None
-    status: Literal["queued", "already_indexing", "already_indexed", "no_pdf"]
+    status: Literal[
+        "queued",
+        "already_parsing",
+        "already_chunking",
+        "already_indexing",
+        "already_indexed",
+        "no_pdf",
+    ]
 
 
 class IndexPapersResponse(BaseModel):

@@ -7,6 +7,7 @@ from fastapi import Request
 from sqlalchemy.orm import Session
 
 from rag.db.config.interface import DatabaseProvider
+from rag.service.arxiv import ArxivClient
 from rag.service.cache.interface import CacheProvider
 from rag.service.elasticsearch.config.client import ElasticsearchClient
 from rag.service.embedding.config.interface import EmbeddingProvider
@@ -88,3 +89,12 @@ def get_s3_storage(request: Request) -> StorageProvider:
         raise RuntimeError("S3 storage is not initialized on app.state")
 
     return storage
+
+
+def get_arxiv_client(request: Request) -> ArxivClient:
+    arxiv_client: ArxivClient | None = getattr(request.app.state, "arxiv_client", None)
+
+    if arxiv_client is None:
+        raise RuntimeError("arxiv_client is not initialized on app.state")
+
+    return arxiv_client

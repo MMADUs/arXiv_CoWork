@@ -5,7 +5,12 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from rag.db.model import PaperIndexingStatus, PaperModel
+from rag.db.model import (
+    PaperChunkingStatus,
+    PaperIndexingStatus,
+    PaperModel,
+    PaperParserStatus,
+)
 from rag.db.repository import PaperRepository
 from worker.payloads import PaperIndexingPayload
 from worker.workflow import enqueue_paper_indexing_workflow
@@ -46,9 +51,7 @@ def enqueue_pending_indexing_workflows(
     return [
         enqueue_indexing_workflow_for_paper(
             paper=paper,
-            paper_repository=paper_repository,
             request=request,
-            session=session,
         )
         for paper in papers
     ]
@@ -56,10 +59,22 @@ def enqueue_pending_indexing_workflows(
 
 def enqueue_indexing_workflow_for_paper(
     paper: PaperModel,
-    paper_repository: PaperRepository,
     request: IndexPaperRequest,
-    session: Session,
 ) -> IndexPaperItem:
+    if paper.parser_status == PaperParserStatus.PARSING:
+        return _index_item(
+            paper=paper,
+            task_id=None,
+            status="already_parsing",
+        )
+
+    if paper.chunking_status == PaperChunkingStatus.CHUNKING:
+        return _index_item(
+            paper=paper,
+            task_id=None,
+            status="already_chunking",
+        )
+
     if paper.indexing_status == PaperIndexingStatus.INDEXING:
         return _index_item(
             paper=paper,
@@ -84,19 +99,10 @@ def enqueue_indexing_workflow_for_paper(
             status="no_pdf",
         )
 
-    paper_repository.mark_indexing_started(paper)
-    session.commit()
-
-    try:
-        task_id = enqueue_indexing_workflow(
-            paper_id=paper.id,
-            request=request,
-        )
-
-    except Exception:
-        paper_repository.mark_indexing_failed(paper)
-        session.commit()
-        raise
+    task_id = enqueue_indexing_workflow(
+        paper_id=paper.id,
+        request=request,
+    )
 
     return _index_item(
         paper=paper,
@@ -122,6 +128,8 @@ def _index_item(
         paper_id=paper.id,
         arxiv_id=paper.arxiv_id,
         title=paper.title,
+        parser_status=paper.parser_status,
+        chunking_status=paper.chunking_status,
         indexing_status=paper.indexing_status,
         task_id=task_id,
         status=status,

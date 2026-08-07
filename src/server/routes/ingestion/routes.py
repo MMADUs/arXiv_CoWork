@@ -6,8 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from rag.service.arxiv import ArxivIngestionService
-from server.dependencies import get_db_session
+from rag.service.arxiv import ArxivClient, ArxivIngestionService
+from server.dependencies import get_arxiv_client, get_db_session
 from server.routes.ingestion.helpers import (
     enqueue_pdf_download_by_id,
     enqueue_pdf_downloads_for_ingested_papers,
@@ -33,8 +33,12 @@ router = APIRouter(prefix="/papers", tags=["paper-ingestion"])
 async def ingest_arxiv_papers(
     request: ArxivIngestRequest,
     session: Session = Depends(get_db_session),
+    arxiv_client: ArxivClient = Depends(get_arxiv_client),
 ) -> ArxivIngestResponse:
-    ingestion_service = ArxivIngestionService(session)
+    ingestion_service = ArxivIngestionService(
+        session=session,
+        arxiv_client=arxiv_client,
+    )
 
     try:
         query_params = request.to_arxiv_query_params()

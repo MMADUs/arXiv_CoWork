@@ -18,6 +18,10 @@ class RetryableStageError(RuntimeError):
     pass
 
 
+class StagePrerequisiteError(RuntimeError):
+    pass
+
+
 def retry_or_fail(
     task: Task,
     error: Exception,
@@ -40,13 +44,23 @@ def mark_paper_parse_failed(paper_id: UUID, error: str) -> None:
             session.commit()
 
 
-def mark_paper_indexing_failed(paper_id: UUID) -> None:
+def mark_paper_chunking_failed(paper_id: UUID, error: str) -> None:
     with worker_db_session(settings) as session:
         paper_repository = PaperRepository(session)
         paper = paper_repository.get_by_id(paper_id)
 
         if paper is not None:
-            paper_repository.mark_indexing_failed(paper)
+            paper_repository.mark_chunking_failed(paper, error)
+            session.commit()
+
+
+def mark_paper_indexing_failed(paper_id: UUID, error: str | None = None) -> None:
+    with worker_db_session(settings) as session:
+        paper_repository = PaperRepository(session)
+        paper = paper_repository.get_by_id(paper_id)
+
+        if paper is not None:
+            paper_repository.mark_indexing_failed(paper, error)
             session.commit()
 
 

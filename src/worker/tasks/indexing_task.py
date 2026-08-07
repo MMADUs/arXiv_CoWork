@@ -30,14 +30,19 @@ def index_paper_chunks(self: Task, payload: dict[str, Any]) -> dict[str, Any]:
         result = worker_async_run(_index_paper_chunks(self, task_payload))
 
     except ValueError as error:
-        mark_paper_indexing_failed(task_payload.paper_id)
+        mark_paper_indexing_failed(task_payload.paper_id, str(error))
         raise error
 
     except Exception as error:
+        retry_error = RetryableStageError(str(error))
+
         retry_or_fail(
             self,
-            RetryableStageError(str(error)),
-            lambda: mark_paper_indexing_failed(task_payload.paper_id),
+            retry_error,
+            lambda: mark_paper_indexing_failed(
+                task_payload.paper_id,
+                str(retry_error),
+            ),
         )
         raise
 
@@ -48,7 +53,10 @@ def index_paper_chunks(self: Task, payload: dict[str, Any]) -> dict[str, Any]:
         retry_or_fail(
             self,
             error,
-            lambda: mark_paper_indexing_failed(task_payload.paper_id),
+            lambda: mark_paper_indexing_failed(
+                task_payload.paper_id,
+                str(error),
+            ),
         )
 
     return {

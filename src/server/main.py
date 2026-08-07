@@ -7,10 +7,12 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+import httpx
 
 from rag import __version__
 from rag.config import get_settings
 from rag.db.config import create_database
+from rag.service.arxiv import ArxivClient
 from rag.service.storage import create_s3_storage
 
 from server.routes.health import router as health_router
@@ -37,6 +39,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     s3_storage.ensure_bucket_exists()
     app.state.s3_storage = s3_storage
 
+    # init arXiv metadata client
+    arxiv_http_client = httpx.AsyncClient(
+        timeout=settings.arxiv_settings.fetch_timeout_seconds,
+    )
+    arxiv_client = ArxivClient(
+        settings.arxiv_settings,
+        client=arxiv_http_client,
+    )
+    app.state.arxiv_client = arxiv_client
+
     logger.info("Application startup completed")
 
     try:
@@ -44,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     finally:
         # shutdown phase
+        await arxiv_client.close()
         database.shutdown()
         s3_storage.close()
 
