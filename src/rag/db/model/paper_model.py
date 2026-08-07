@@ -24,16 +24,23 @@ class PaperIngestionStatus(StrEnum):
 
 class PaperParserStatus(StrEnum):
     PENDING = "pending"
+    PARSING = "parsing"
     PARSED = "parsed"
+    FAILED = "failed"
+
+
+class PaperChunkingStatus(StrEnum):
+    PENDING = "pending"
+    CHUNKING = "chunking"
+    CHUNKED = "chunked"
+    NO_CHUNKS = "no_chunks"
     FAILED = "failed"
 
 
 class PaperIndexingStatus(StrEnum):
     PENDING = "pending"
-    CHUNKED = "chunked"
     INDEXING = "indexing"
     INDEXED = "indexed"
-    NO_CHUNKS = "no_chunks"
     FAILED = "failed"
 
 
@@ -67,6 +74,10 @@ class PaperModel(Base):
     parser_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # store parser error message
     parser_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # store chunking error message
+    chunking_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # store paper-level indexing workflow error message
+    indexing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # status
     ingestion_status: Mapped[str] = mapped_column(
@@ -74,6 +85,9 @@ class PaperModel(Base):
     )
     parser_status: Mapped[str] = mapped_column(
         String(32), default=PaperParserStatus.PENDING
+    )
+    chunking_status: Mapped[str] = mapped_column(
+        String(32), default=PaperChunkingStatus.PENDING
     )
     indexing_status: Mapped[str] = mapped_column(
         String(32), default=PaperIndexingStatus.PENDING

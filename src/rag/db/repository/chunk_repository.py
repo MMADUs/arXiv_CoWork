@@ -1,11 +1,12 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
+from dataclasses import dataclass
 from uuid import UUID
 from datetime import datetime, timezone
 from collections.abc import Iterable
 
-from sqlalchemy import delete, distinct, func, select
+from sqlalchemy import delete, distinct, func, or_, select
 from sqlalchemy.orm import Session
 
 from rag.db.model import (
@@ -15,6 +16,14 @@ from rag.db.model import (
     ChunkIndexingStatus,
 )
 from rag.schema.chunk_schema import ChunkCandidate
+
+
+@dataclass(slots=True)
+class ChunkErrorSummary:
+    paper_id: UUID
+    stage: str
+    message: str
+    count: int
 
 
 class ChunkRepository:
@@ -124,6 +133,62 @@ class ChunkRepository:
             statement = statement.where(ChunkModel.paper_id == paper_id)
 
         return list(self.session.scalars(statement))
+
+    def list_error_summaries_by_paper_ids(
+        self,
+        paper_ids: Iterable[UUID],
+    ) -> dict[UUID, list[ChunkErrorSummary]]:
+        paper_id_list = list(dict.fromkeys(paper_ids))
+
+        if not paper_id_list:
+            return {}
+
+        statement = (
+            select(
+                ChunkModel.paper_id,
+                ChunkModel.embedding_status,
+                ChunkModel.embedding_error,
+                ChunkModel.indexing_status,
+                ChunkModel.indexing_error,
+            )
+            .where(ChunkModel.paper_id.in_(paper_id_list))
+            .where(
+                or_(
+                    ChunkModel.embedding_status == ChunkEmbeddingStatus.FAILED,
+                    ChunkModel.indexing_status == ChunkIndexingStatus.FAILED,
+                )
+            )
+        )
+
+        grouped: dict[UUID, dict[tuple[str, str], int]] = {}
+
+        for row in self.session.execute(statement):
+            paper_id = row.paper_id
+            paper_errors = grouped.setdefault(paper_id, {})
+
+            if (
+                row.embedding_status == ChunkEmbeddingStatus.FAILED
+                and row.embedding_error
+            ):
+                key = ("embedding", row.embedding_error)
+                paper_errors[key] = paper_errors.get(key, 0) + 1
+
+            if row.indexing_status == ChunkIndexingStatus.FAILED and row.indexing_error:
+                key = ("indexing", row.indexing_error)
+                paper_errors[key] = paper_errors.get(key, 0) + 1
+
+        return {
+            paper_id: [
+                ChunkErrorSummary(
+                    paper_id=paper_id,
+                    stage=stage,
+                    message=message,
+                    count=count,
+                )
+                for (stage, message), count in sorted(error_counts.items())
+            ]
+            for paper_id, error_counts in grouped.items()
+        }
 
     # def get_indexing_stats(self) -> dict[str, int | float | datetime | None]:
     #     total_chunks = self.session.scalar(select(func.count(ChunkModel.id))) or 0

@@ -5,11 +5,12 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from rag.db.model import (
     PaperModel,
+    PaperChunkingStatus,
     PaperIngestionStatus,
     PaperIndexingStatus,
     PaperParserStatus,
@@ -50,6 +51,28 @@ class PaperRepository:
         )
         return list(self.session.scalars(statement))
 
+    def list_failed(self, limit: int = 50, offset: int = 0) -> list[PaperModel]:
+        statement = (
+            select(PaperModel)
+            .where(
+                or_(
+                    PaperModel.ingestion_status.in_(
+                        [
+                            PaperIngestionStatus.METADATA_FAILED,
+                            PaperIngestionStatus.PDF_FAILED,
+                        ]
+                    ),
+                    PaperModel.parser_status == PaperParserStatus.FAILED,
+                    PaperModel.chunking_status == PaperChunkingStatus.FAILED,
+                    PaperModel.indexing_status == PaperIndexingStatus.FAILED,
+                )
+            )
+            .order_by(PaperModel.updated_at.desc(), PaperModel.published_date.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(self.session.scalars(statement))
+
     def upsert_from_arxiv(self, arxiv_paper: ArxivPaperMetadata) -> PaperModel:
         """
         insert paper metadata if not exist, otherwise update existing paper metadata
@@ -74,6 +97,7 @@ class PaperRepository:
                 ingestion_status=PaperIngestionStatus.METADATA_FETCHED,
                 # stay pending
                 parser_status=PaperParserStatus.PENDING,
+                chunking_status=PaperChunkingStatus.PENDING,
                 indexing_status=PaperIndexingStatus.PENDING,
             )
             self.session.add(paper)
@@ -162,10 +186,7 @@ class PaperRepository:
         limit: int = 50,
         include_failed: bool = False,
     ) -> list[PaperModel]:
-        statuses = [
-            PaperIndexingStatus.PENDING,
-            PaperIndexingStatus.CHUNKED,
-        ]
+        statuses = [PaperIndexingStatus.PENDING]
 
         if include_failed:
             statuses.append(PaperIndexingStatus.FAILED)
@@ -174,12 +195,31 @@ class PaperRepository:
             select(PaperModel)
             .where(PaperModel.pdf_object_key.is_not(None))
             .where(PaperModel.indexing_status.in_(statuses))
+            .where(PaperModel.chunking_status != PaperChunkingStatus.NO_CHUNKS)
             .order_by(PaperModel.updated_at.asc(), PaperModel.created_at.asc())
             .limit(limit)
             .with_for_update(skip_locked=True)
         )
 
+        if not include_failed:
+            statement = statement.where(
+                PaperModel.parser_status != PaperParserStatus.FAILED
+            ).where(
+                PaperModel.chunking_status != PaperChunkingStatus.FAILED
+            )
+
         return list(self.session.scalars(statement))
+
+    def mark_parse_started(self, paper: PaperModel) -> PaperModel:
+        paper.parser_status = PaperParserStatus.PARSING
+        paper.parser_error = None
+        paper.chunking_status = PaperChunkingStatus.PENDING
+        paper.chunking_error = None
+        paper.indexing_status = PaperIndexingStatus.PENDING
+        paper.indexing_error = None
+        paper.updated_at = datetime.now(timezone.utc)
+
+        return paper
 
     def mark_parsed(
         self,
@@ -195,6 +235,10 @@ class PaperRepository:
         paper.parser_name = parser_name
         paper.parser_status = PaperParserStatus.PARSED
         paper.parser_error = None
+        paper.chunking_status = PaperChunkingStatus.PENDING
+        paper.chunking_error = None
+        paper.indexing_status = PaperIndexingStatus.PENDING
+        paper.indexing_error = None
         paper.updated_at = datetime.now(timezone.utc)
 
         return paper
@@ -205,15 +249,49 @@ class PaperRepository:
         """
         paper.parser_status = PaperParserStatus.FAILED
         paper.parser_error = error
+        paper.chunking_status = PaperChunkingStatus.PENDING
+        paper.chunking_error = None
+        paper.indexing_status = PaperIndexingStatus.PENDING
+        paper.indexing_error = None
+        paper.updated_at = datetime.now(timezone.utc)
+
+        return paper
+
+    def mark_chunking_started(self, paper: PaperModel) -> PaperModel:
+        paper.chunking_status = PaperChunkingStatus.CHUNKING
+        paper.chunking_error = None
+        paper.indexing_status = PaperIndexingStatus.PENDING
+        paper.indexing_error = None
         paper.updated_at = datetime.now(timezone.utc)
 
         return paper
 
     def mark_chunked(self, paper: PaperModel) -> PaperModel:
+        paper.chunking_status = PaperChunkingStatus.CHUNKED
+        paper.chunking_error = None
+        paper.indexing_status = PaperIndexingStatus.PENDING
+        paper.indexing_error = None
+        paper.updated_at = datetime.now(timezone.utc)
+
+        return paper
+
+    def mark_chunking_failed(self, paper: PaperModel, error: str) -> PaperModel:
+        paper.chunking_status = PaperChunkingStatus.FAILED
+        paper.chunking_error = error
+        paper.indexing_status = PaperIndexingStatus.PENDING
+        paper.indexing_error = None
+        paper.updated_at = datetime.now(timezone.utc)
+
+        return paper
+
+    def mark_chunking_skipped(self, paper: PaperModel) -> PaperModel:
         """
-        mark paper status when paper content is chunked
+        mark paper status when parsed content produced no chunks
         """
-        paper.indexing_status = PaperIndexingStatus.CHUNKED
+        paper.chunking_status = PaperChunkingStatus.NO_CHUNKS
+        paper.chunking_error = None
+        paper.indexing_status = PaperIndexingStatus.PENDING
+        paper.indexing_error = None
         paper.updated_at = datetime.now(timezone.utc)
 
         return paper
@@ -223,6 +301,7 @@ class PaperRepository:
         mark paper status when indexing paper chunks
         """
         paper.indexing_status = PaperIndexingStatus.INDEXING
+        paper.indexing_error = None
         paper.updated_at = datetime.now(timezone.utc)
 
         return paper
@@ -232,24 +311,22 @@ class PaperRepository:
         mark paper status when paper chunks is successfully indexed
         """
         paper.indexing_status = PaperIndexingStatus.INDEXED
+        paper.indexing_error = None
         paper.updated_at = datetime.now(timezone.utc)
 
         return paper
 
-    def mark_indexing_failed(self, paper: PaperModel) -> PaperModel:
+    def mark_indexing_failed(
+        self,
+        paper: PaperModel,
+        error: str | None = None,
+    ) -> PaperModel:
         """
         mark paper status when indexing chunks failed
         """
         paper.indexing_status = PaperIndexingStatus.FAILED
-        paper.updated_at = datetime.now(timezone.utc)
-
-        return paper
-
-    def mark_indexing_skipped(self, paper: PaperModel) -> PaperModel:
-        """
-        this is edge case, mark paper status when there is no chunk to index
-        """
-        paper.indexing_status = PaperIndexingStatus.NO_CHUNKS
+        if error is not None:
+            paper.indexing_error = error
         paper.updated_at = datetime.now(timezone.utc)
 
         return paper
