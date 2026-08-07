@@ -41,6 +41,9 @@ class PaperChunkingService:
             if paper.parsed_json_object_key is None:
                 raise ValueError(f"Paper with id {paper_id} has no parsed JSON artifact")
 
+            self.paper_repository.mark_chunking_started(paper)
+            self.session.commit()
+
             parsed_json = self.storage.download_json(paper.parsed_json_object_key)
             parsed_document = ParsedDocument.model_validate(parsed_json)
 
@@ -56,10 +59,10 @@ class PaperChunkingService:
                 source_object_key=paper.parsed_json_object_key,
             )
 
-            if chunks:
-                self.paper_repository.mark_chunked(paper)
+            if not chunks:
+                self.paper_repository.mark_chunking_skipped(paper)
             else:
-                self.paper_repository.mark_indexing_skipped(paper)
+                self.paper_repository.mark_chunked(paper)
 
             self.session.commit()
 
@@ -79,4 +82,13 @@ class PaperChunkingService:
         except Exception as error:
             self.session.rollback()
             logger.exception("Failed parsed paper chunking")
-            raise RuntimeError("Failed parsed paper chunking") from error
+            raise RuntimeError(_chunking_error_message(error)) from error
+
+
+def _chunking_error_message(error: Exception) -> str:
+    message = str(error).splitlines()[0]
+
+    if "NUL (0x00)" in str(error):
+        message = "PostgreSQL text fields cannot contain NUL (0x00) bytes"
+
+    return f"Failed parsed paper chunking: {message}"

@@ -13,6 +13,7 @@ from rag.db.repository import PaperRepository
 from rag.service.storage import StorageProvider
 from rag.service.parser.parser_provider import ParserProvider
 from rag.service.arxiv import make_arxiv_id_safe
+from rag.schema.document_schema import ParsedDocument, ParsedSection
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class PaperParsingService:
 
     def parse_stored_pdf(self, paper_id: UUID) -> dict[str, str]:
         paper = None
+        parsing_started = False
 
         try:
             paper = self.paper_repository.get_by_id(paper_id)
@@ -54,6 +56,10 @@ class PaperParsingService:
                 raise ValueError(f"Paper with id {paper_id} has no stored PDF")
 
             safe_arxiv_id = make_arxiv_id_safe(paper.arxiv_id)
+
+            self.paper_repository.mark_parse_started(paper)
+            self.session.commit()
+            parsing_started = True
 
             logger.info(
                 "Parsing stored paper PDF: paper_id=%s arxiv_id=%s",
@@ -76,6 +82,7 @@ class PaperParsingService:
 
                 logger.info("Parsing PDF from local path: local_path=%s", local_path)
                 parsed = self.parser_provider.parse_pdf(local_path)
+                parsed = _sanitize_parsed_document(parsed)
 
                 json_object_key = f"arxiv/{safe_arxiv_id}/parsed/parsed_document.json"
 
@@ -105,16 +112,40 @@ class PaperParsingService:
             }
 
         except ValueError as error:
-            if paper is not None:
+            if paper is not None and parsing_started:
                 self.paper_repository.mark_parse_failed(paper, str(error))
                 self.session.commit()
 
             raise
 
         except Exception as error:
-            if paper is not None:
+            if paper is not None and parsing_started:
                 self.paper_repository.mark_parse_failed(paper, str(error))
                 self.session.commit()
 
             logger.exception("Failed paper PDF parsing")
             raise RuntimeError("Failed paper PDF parsing") from error
+
+
+def _sanitize_parsed_document(parsed: ParsedDocument) -> ParsedDocument:
+    return parsed.model_copy(
+        update={
+            "raw_text": _sanitize_text(parsed.raw_text),
+            "sections": [
+                ParsedSection(
+                    title=_sanitize_text(section.title),
+                    content=_sanitize_text(section.content),
+                    header_level=section.header_level,
+                )
+                for section in parsed.sections
+            ],
+            "metadata": {
+                key: _sanitize_text(value) if isinstance(value, str) else value
+                for key, value in parsed.metadata.items()
+            },
+        }
+    )
+
+
+def _sanitize_text(text: str) -> str:
+    return text.replace("\x00", "")

@@ -634,19 +634,22 @@ class TextChunker:
         """
         build the chunk candidate
         """
-        normalized_content = content.strip()
+        normalized_content = self._sanitize_text(content).strip()
 
         # each chunk includes:
         # title, abstract, section title, and content
         context_title, context_abstract = self._paper_context(
-            title=title,
-            abstract=abstract,
+            title=self._sanitize_text(title),
+            abstract=self._sanitize_text(abstract),
+        )
+        normalized_section_title = (
+            self._sanitize_text(section_title) if section_title else None
         )
 
         text = (
             f"Title: {context_title}\n\n"
             f"Abstract: {context_abstract}\n\n"
-            f"Section: {section_title or 'Unknown'}\n\n"
+            f"Section: {normalized_section_title or 'Unknown'}\n\n"
             f"Content:\n{normalized_content}"
         )
 
@@ -660,7 +663,7 @@ class TextChunker:
 
         return ChunkCandidate(
             chunk_index=chunk_index,
-            section_title=section_title,
+            section_title=normalized_section_title,
             text=text,
             word_count=word_count,
             start_word=start_word,
@@ -722,3 +725,6 @@ class TextChunker:
             )
             for match in re.finditer(r"\S+", text)
         ]
+
+    def _sanitize_text(self, text: str) -> str:
+        return text.replace("\x00", "")
