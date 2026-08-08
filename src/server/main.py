@@ -13,8 +13,12 @@ from rag import __version__
 from rag.config import get_settings
 from rag.db.config import create_database
 from rag.service.arxiv import ArxivClient
+from rag.service.elasticsearch.config.factory import create_elasticsearch_client
+from rag.service.embedding.config.factory import create_embedding
+from rag.service.llm.factory import create_llm_provider
 from rag.service.storage import create_s3_storage
 
+from server.routes.direct_ask import router as direct_ask_router
 from server.routes.health import router as health_router
 from server.routes.indexing import router as indexing_router
 from server.routes.ingestion import router as ingest_router
@@ -49,6 +53,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     app.state.arxiv_client = arxiv_client
 
+    # init direct RAG services
+    elasticsearch_client = create_elasticsearch_client(settings)
+    app.state.elasticsearch_client = elasticsearch_client
+
+    embedding_provider = create_embedding(settings)
+    app.state.embedding_provider = embedding_provider
+
+    llm_provider = create_llm_provider(settings)
+    app.state.llm_provider = llm_provider
+
+    app.state.reranker_provider = None
+
     logger.info("Application startup completed")
 
     try:
@@ -56,6 +72,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     finally:
         # shutdown phase
+        await llm_provider.close()
+        await embedding_provider.close()
+        elasticsearch_client.close()
         await arxiv_client.close()
         database.shutdown()
         s3_storage.close()
@@ -77,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(router=ingest_router, prefix=settings.api_prefix)
     app.include_router(router=paper_router, prefix=settings.api_prefix)
     app.include_router(router=indexing_router, prefix=settings.api_prefix)
+    app.include_router(router=direct_ask_router, prefix=settings.api_prefix)
     app.include_router(router=health_router, prefix=settings.api_prefix)
 
     return app

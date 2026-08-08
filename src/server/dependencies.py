@@ -82,6 +82,10 @@ def get_reranker_provider(request: Request) -> RerankerProvider:
     return reranker_provider
 
 
+def get_optional_reranker_provider(request: Request) -> RerankerProvider | None:
+    return getattr(request.app.state, "reranker_provider", None)
+
+
 def get_s3_storage(request: Request) -> StorageProvider:
     storage: StorageProvider | None = getattr(request.app.state, "s3_storage", None)
 
