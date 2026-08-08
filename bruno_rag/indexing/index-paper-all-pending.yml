@@ -1,0 +1,26 @@
+info:
+  name: index-paper-all-pending
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{base_url}}/api/papers/index"
+  body:
+    type: json
+    data: |-
+      {
+        "force_parse": false,
+        "force_chunk": false,
+        "force_reindex": false,
+        "include_failed_chunks": true,
+        "batch_size": 50,
+        "limit": 50
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

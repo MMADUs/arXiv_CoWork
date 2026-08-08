@@ -1,0 +1,26 @@
+info:
+  name: ask
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{base_url}}/api/ask"
+  body:
+    type: json
+    data: |-
+      {
+        "question": "what the fuck is agentic reinforcment learning",
+        "retrieval_mode": "hybrid",
+        "top_k": 8,
+        "candidate_pool_size": 50,
+        "use_reranker": false,
+        "include_highlights": true
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

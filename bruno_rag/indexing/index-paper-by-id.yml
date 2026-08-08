@@ -1,11 +1,11 @@
 info:
-  name: index-paper
+  name: index-paper-by-id
   type: http
   seq: 1
 
 http:
   method: POST
-  url: "{{base_url}}/api/papers/6592f9fe-1c63-4dab-8bbf-d6fef6e8e025/index"
+  url: "{{base_url}}/api/papers/{paper_id}/index"
   body:
     type: json
     data: |-

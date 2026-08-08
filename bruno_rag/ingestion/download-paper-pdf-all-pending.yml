@@ -1,0 +1,22 @@
+info:
+  name: download-paper-pdf-all-pending
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{base_url}}/api/papers/download-pdf"
+  body:
+    type: json
+    data: |-
+      {
+        "limit": 50,
+        "include_failed": false
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

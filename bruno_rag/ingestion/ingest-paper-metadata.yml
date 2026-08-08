@@ -10,9 +10,24 @@ http:
     type: json
     data: |-
       {
-        "keywords": ["diffusion model"],
-        "categories": ["cs.AI", "cs.LG", "cs.CV"],
-        "max_results": 10,
+        "keywords": [
+          "agentic reinforcement learning",
+          "LLM agents",
+          "autonomous agents",
+          "multi-agent reinforcement learning"
+        ],
+        "title": null,
+        "abstract": null,
+        "authors": null,
+        "categories": ["cs.AI", "cs.LG", "cs.MA"],
+        "exclude_categories": null,
+        "ids": null,
+        "submitted_from": null,
+        "submitted_to": null,
+        "max_results": 50,
+        "start": 0,
+        "sort_by": "submittedDate",
+        "sort_order": "descending",
         "download_pdf": false
       }
   auth: inherit

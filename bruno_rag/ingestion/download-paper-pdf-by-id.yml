@@ -1,19 +1,16 @@
 info:
-  name: ingest-paper-pdf
+  name: download-paper-pdf-by-id
   type: http
   seq: 1
 
 http:
   method: POST
-  url: "{{base_url}}/api/papers/ingest/pdf"
+  url: "{{base_url}}/api/papers/{paper_id}/download-pdf"
   body:
     type: json
     data: |-
       {
-        "paper_ids": [
-          "6592f9fe-1c63-4dab-8bbf-d6fef6e8e025",
-          "a3400b78-40f4-45b1-927f-c4e9dd37ed4e"
-        ]
+        "force_download": false
       }
   auth: inherit
 
