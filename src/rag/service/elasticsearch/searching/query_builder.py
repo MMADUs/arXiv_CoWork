@@ -21,6 +21,13 @@ class ElasticsearchQueryBuilder:
         track_total_hits: bool = True,
         min_score: float | None = None,
     ) -> None:
+        if (
+            published_from is not None
+            and published_to is not None
+            and published_from > published_to
+        ):
+            raise ValueError("published_from must be before or equal to published_to")
+        
         self.categories = categories
         self.paper_id = paper_id
         self.published_from = published_from
@@ -79,7 +86,8 @@ class ElasticsearchQueryBuilder:
         candidate_pool_size: int | None = None,
         num_candidates: int | None = None,
     ) -> dict[str, Any]:
-        self._validate_query_vector(query_vector)
+        if not query_vector:
+            raise ValueError("query_vector must not be empty")
 
         k = self._candidate_pool_size(
             size=size,
@@ -107,79 +115,12 @@ class ElasticsearchQueryBuilder:
 
         return request_body
 
-    def hybrid_rrf(
-        self,
-        query: str,
-        query_vector: list[float],
-        size: int,
-        offset: int,
-        rank_window_size: int,
-        rank_constant: int = 60,
-        num_candidates: int | None = None,
-        fuzziness: str | None = None,
-        include_highlights: bool = True,
-    ) -> dict[str, Any]:
-        self._validate_query_vector(query_vector)
-        self._validate_rank_window_size(
-            rank_window_size=rank_window_size,
-            size=size,
-            offset=offset,
-        )
-
-        k = rank_window_size
-        filters = self._filters()
-
-        standard_query: dict[str, Any] = {
-            "bool": {
-                "must": (
-                    [self._bm25_query(query, fuzziness=fuzziness)]
-                    if query.strip()
-                    else [{"match_all": {}}]
-                ),
-                "filter": filters,
-            }
-        }
-
-        knn_retriever: dict[str, Any] = {
-            "field": "embedding",
-            "query_vector": query_vector,
-            "k": k,
-            "num_candidates": num_candidates or max(100, k),
-        }
-
-        if filters:
-            knn_retriever["filter"] = {
-                "bool": {
-                    "filter": filters,
-                }
-            }
-
-        request_body = self._base_body(size=size, offset=offset)
-
-        request_body["retriever"] = {
-            "rrf": {
-                "retrievers": [
-                    {
-                        "standard": {
-                            "query": standard_query,
-                        }
-                    },
-                    {
-                        "knn": knn_retriever,
-                    },
-                ],
-                "rank_window_size": rank_window_size,
-                "rank_constant": rank_constant,
-            }
-        }
-
-        if include_highlights:
-            request_body["highlight"] = self._highlight_config()
-
-        return request_body
-
     def _base_body(self, size: int, offset: int) -> dict[str, Any]:
-        self._validate_pagination(size=size, offset=offset)
+        if size < 1:
+            raise ValueError("size must be greater than 0")
+
+        if offset < 0:
+            raise ValueError("offset must be greater than or equal to 0")
 
         body: dict[str, Any] = {
             "from": offset,
@@ -328,33 +269,3 @@ class ElasticsearchQueryBuilder:
             )
 
         return candidate_pool_size
-
-    def _validate_filters(self) -> None:
-        if (
-            self.published_from is not None
-            and self.published_to is not None
-            and self.published_from > self.published_to
-        ):
-            raise ValueError("published_from must be before or equal to published_to")
-
-    def _validate_pagination(self, size: int, offset: int) -> None:
-        if size < 1:
-            raise ValueError("size must be greater than 0")
-
-        if offset < 0:
-            raise ValueError("offset must be greater than or equal to 0")
-
-    def _validate_query_vector(self, query_vector: list[float]) -> None:
-        if not query_vector:
-            raise ValueError("query_vector must not be empty")
-
-    def _validate_rank_window_size(
-        self,
-        rank_window_size: int,
-        size: int,
-        offset: int,
-    ) -> None:
-        if rank_window_size < size + offset:
-            raise ValueError(
-                "rank_window_size must be greater than or equal to size + offset"
-            )
