@@ -18,6 +18,7 @@ from rag.service.embedding.config.factory import create_embedding
 from rag.service.llm.factory import create_llm_provider
 from rag.service.storage import create_s3_storage
 
+from server.routes.agentic_ask import router as agentic_ask_router
 from server.routes.direct_ask import router as direct_ask_router
 from server.routes.health import router as health_router
 from server.routes.indexing import router as indexing_router
@@ -97,6 +98,7 @@ def create_app() -> FastAPI:
     app.include_router(router=paper_router, prefix=settings.api_prefix)
     app.include_router(router=indexing_router, prefix=settings.api_prefix)
     app.include_router(router=direct_ask_router, prefix=settings.api_prefix)
+    app.include_router(router=agentic_ask_router, prefix=settings.api_prefix)
     app.include_router(router=health_router, prefix=settings.api_prefix)
 
     return app
