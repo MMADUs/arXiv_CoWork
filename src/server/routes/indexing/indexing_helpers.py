@@ -12,21 +12,24 @@ from rag.db.model import (
     PaperParserStatus,
 )
 from rag.db.repository import PaperRepository
-from worker.payloads import PaperIndexingPayload
-from worker.workflow import enqueue_paper_indexing_workflow
+from worker.queue_schema import IndexingQueue
+from worker.workflow import enqueue_indexing_workflow
 
-from server.routes.indexing.schema import (
+from server.routes.indexing.indexing_schema import (
     IndexPaperItem,
     IndexPaperRequest,
     IndexPendingPapersRequest,
 )
 
 
-def enqueue_indexing_workflow(
+def enqueue_indexing_by_id(
     paper_id: UUID,
     request: IndexPaperRequest,
 ) -> str:
-    payload = PaperIndexingPayload(
+    """
+    Enqueue indexing task by paper id to worker workflow
+    """
+    payload = IndexingQueue(
         paper_id=paper_id,
         force_parse=request.force_parse,
         force_chunk=request.force_chunk,
@@ -35,91 +38,77 @@ def enqueue_indexing_workflow(
         batch_size=request.batch_size,
     )
 
-    return enqueue_paper_indexing_workflow(payload)
+    return enqueue_indexing_workflow(payload)
 
 
-def enqueue_pending_indexing_workflows(
-    request: IndexPendingPapersRequest,
-    session: Session,
-) -> list[IndexPaperItem]:
-    paper_repository = PaperRepository(session)
-    papers = paper_repository.list_pending_indexing_papers(
-        limit=request.limit,
-        include_failed=request.include_failed_chunks,
-    )
-
-    return [
-        enqueue_indexing_workflow_for_paper(
-            paper=paper,
-            request=request,
-        )
-        for paper in papers
-    ]
-
-
-def enqueue_indexing_workflow_for_paper(
+def enqueue_paper(
     paper: PaperModel,
     request: IndexPaperRequest,
 ) -> IndexPaperItem:
     if paper.parser_status == PaperParserStatus.PARSING:
-        return _index_item(
+        return _return_item(
             paper=paper,
             task_id=None,
             status="already_parsing",
         )
 
     if paper.chunking_status == PaperChunkingStatus.CHUNKING:
-        return _index_item(
+        return _return_item(
             paper=paper,
             task_id=None,
             status="already_chunking",
         )
 
     if paper.indexing_status == PaperIndexingStatus.INDEXING:
-        return _index_item(
+        return _return_item(
             paper=paper,
             task_id=None,
             status="already_indexing",
         )
 
-    if (
-        paper.indexing_status == PaperIndexingStatus.INDEXED
-        and not request.force_reindex
+    if paper.indexing_status == PaperIndexingStatus.INDEXED and not (
+        request.force_parse or request.force_chunk or request.force_reindex
     ):
-        return _index_item(
+        return _return_item(
             paper=paper,
             task_id=None,
             status="already_indexed",
         )
 
     if paper.pdf_object_key is None:
-        return _index_item(
+        return _return_item(
             paper=paper,
             task_id=None,
             status="no_pdf",
         )
 
-    task_id = enqueue_indexing_workflow(
-        paper_id=paper.id,
-        request=request,
-    )
+    task_id = enqueue_indexing_by_id(paper_id=paper.id, request=request)
 
-    return _index_item(
+    return _return_item(
         paper=paper,
         task_id=task_id,
         status="queued",
     )
 
 
-def queued_index_count(items: list[IndexPaperItem]) -> int:
-    return sum(1 for item in items if item.status == "queued")
+def enqueue_pending_indexing(
+    request: IndexPendingPapersRequest,
+    session: Session,
+) -> list[IndexPaperItem]:
+    """
+    Enqueue all pending indexing paper to worker workflow
+    """
+    paper_repository = PaperRepository(session)
+
+    papers = paper_repository.list_pending_indexing_papers(
+        limit=request.limit,
+        include_failed=request.include_failed_chunks,
+    )
+
+    return [enqueue_paper(paper=paper, request=request) for paper in papers]
 
 
-def skipped_index_count(items: list[IndexPaperItem]) -> int:
-    return sum(1 for item in items if item.status != "queued")
-
-
-def _index_item(
+def _return_item(
     paper: PaperModel,
     task_id: str | None,
     status: str,
@@ -134,3 +123,11 @@ def _index_item(
         task_id=task_id,
         status=status,
     )
+
+
+def queued_index_count(items: list[IndexPaperItem]) -> int:
+    return sum(1 for item in items if item.status == "queued")
+
+
+def skipped_index_count(items: list[IndexPaperItem]) -> int:
+    return sum(1 for item in items if item.status != "queued")

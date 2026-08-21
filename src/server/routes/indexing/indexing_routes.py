@@ -10,13 +10,13 @@ from rag.db.model import PaperChunkingStatus, PaperIndexingStatus, PaperParserSt
 from rag.db.repository import PaperRepository
 
 from server.dependencies import get_db_session
-from server.routes.indexing.helpers import (
-    enqueue_indexing_workflow,
-    enqueue_pending_indexing_workflows,
+from server.routes.indexing.indexing_helpers import (
+    enqueue_indexing_by_id,
+    enqueue_pending_indexing,
     queued_index_count,
     skipped_index_count,
 )
-from server.routes.indexing.schema import (
+from server.routes.indexing.indexing_schema import (
     IndexPaperRequest,
     IndexPaperResponse,
     IndexPapersResponse,
@@ -31,12 +31,12 @@ router = APIRouter(prefix="/papers", tags=["paper-indexing"])
     response_model=IndexPapersResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def enqueue_pending_arxiv_paper_indexing(
+def enqueue_indexing_route(
     request: IndexPendingPapersRequest,
     session: Session = Depends(get_db_session),
 ) -> IndexPapersResponse:
     try:
-        papers = enqueue_pending_indexing_workflows(
+        papers = enqueue_pending_indexing(
             request=request,
             session=session,
         )
@@ -60,7 +60,7 @@ def enqueue_pending_arxiv_paper_indexing(
     response_model=IndexPaperResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def enqueue_arxiv_paper_indexing(
+def enqueue_indexing_by_id_route(
     paper_id: UUID,
     request: IndexPaperRequest,
     session: Session = Depends(get_db_session),
@@ -93,12 +93,13 @@ def enqueue_arxiv_paper_indexing(
             detail=f"Paper indexing is already in progress: {paper_id}",
         )
 
-    if (
-        paper.indexing_status == PaperIndexingStatus.INDEXED
-        and not request.force_reindex
+    if paper.indexing_status == PaperIndexingStatus.INDEXED and not (
+        request.force_parse or request.force_chunk or request.force_reindex
     ):
         return IndexPaperResponse(
             paper_id=paper_id,
+            arxiv_id=paper.arxiv_id,
+            title=paper.title,
             task_id=None,
             status="already_indexed",
         )
@@ -110,7 +111,7 @@ def enqueue_arxiv_paper_indexing(
         )
 
     try:
-        task_id = enqueue_indexing_workflow(paper_id=paper_id, request=request)
+        task_id = enqueue_indexing_by_id(paper_id=paper_id, request=request)
 
     except Exception as error:
         raise HTTPException(
@@ -120,6 +121,8 @@ def enqueue_arxiv_paper_indexing(
 
     return IndexPaperResponse(
         paper_id=paper_id,
+        arxiv_id=paper.arxiv_id,
+        title=paper.title,
         task_id=task_id,
         status="queued",
     )

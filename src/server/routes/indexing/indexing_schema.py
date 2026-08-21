@@ -8,6 +8,10 @@ from pydantic import BaseModel, Field
 
 
 class IndexPaperRequest(BaseModel):
+    """
+    Router request schema for index paper by id
+    """
+
     force_parse: bool = False
     force_chunk: bool = False
     force_reindex: bool = False
@@ -15,17 +19,19 @@ class IndexPaperRequest(BaseModel):
     batch_size: int = Field(default=50, ge=1, le=500)
 
 
-class IndexPaperResponse(BaseModel):
-    paper_id: UUID
-    task_id: str | None
-    status: Literal["queued", "already_indexed"]
-
-
 class IndexPendingPapersRequest(IndexPaperRequest):
+    """
+    Router request schema for index all pending papers
+    """
+
     limit: int = Field(default=50, ge=1, le=500)
 
 
 class IndexPaperItem(BaseModel):
+    """
+    Index paper item response to show each item response information during bulk process
+    """
+
     paper_id: UUID
     arxiv_id: str
     title: str
@@ -44,7 +50,23 @@ class IndexPaperItem(BaseModel):
 
 
 class IndexPapersResponse(BaseModel):
+    """
+    Router response schema for index all pending papers
+    """
+
     requested: int
     queued: int
     skipped: int
     papers: list[IndexPaperItem]
+
+
+class IndexPaperResponse(BaseModel):
+    """
+    Router response schema for index paper by id
+    """
+
+    paper_id: UUID
+    arxiv_id: str
+    title: str
+    task_id: str | None
+    status: Literal["queued", "already_indexed"]
