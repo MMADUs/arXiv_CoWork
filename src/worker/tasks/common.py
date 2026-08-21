@@ -2,23 +2,24 @@
 # SPDX-License-Identifier: MIT
 
 from collections.abc import Callable
-from uuid import UUID
 
 from celery import Task
 
 from rag.config import get_settings
-from rag.db.repository import PaperRepository
-from worker.resources import worker_db_session
 
 settings = get_settings()
 celery_settings = settings.celery_settings
 
 
 class RetryableStageError(RuntimeError):
+    """Runtime error exception for a retryable failure at certain stage"""
+
     pass
 
 
 class StagePrerequisiteError(RuntimeError):
+    """Runtime error exception when a data gets processed when its prior stages failed"""
+
     pass
 
 
@@ -32,46 +33,6 @@ def retry_or_fail(
         raise error
 
     raise task.retry(exc=error, countdown=_retry_countdown(task))
-
-
-def mark_paper_parse_failed(paper_id: UUID, error: str) -> None:
-    with worker_db_session(settings) as session:
-        paper_repository = PaperRepository(session)
-        paper = paper_repository.get_by_id(paper_id)
-
-        if paper is not None:
-            paper_repository.mark_parse_failed(paper, error)
-            session.commit()
-
-
-def mark_paper_chunking_failed(paper_id: UUID, error: str) -> None:
-    with worker_db_session(settings) as session:
-        paper_repository = PaperRepository(session)
-        paper = paper_repository.get_by_id(paper_id)
-
-        if paper is not None:
-            paper_repository.mark_chunking_failed(paper, error)
-            session.commit()
-
-
-def mark_paper_indexing_failed(paper_id: UUID, error: str | None = None) -> None:
-    with worker_db_session(settings) as session:
-        paper_repository = PaperRepository(session)
-        paper = paper_repository.get_by_id(paper_id)
-
-        if paper is not None:
-            paper_repository.mark_indexing_failed(paper, error)
-            session.commit()
-
-
-def mark_paper_pdf_download_failed(paper_id: UUID, error: str) -> None:
-    with worker_db_session(settings) as session:
-        paper_repository = PaperRepository(session)
-        paper = paper_repository.get_by_id(paper_id)
-
-        if paper is not None:
-            paper_repository.mark_pdf_download_failed(paper, error)
-            session.commit()
 
 
 def _retry_countdown(task: Task) -> int:

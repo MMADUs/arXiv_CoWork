@@ -1,12 +1,12 @@
 ﻿# Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-from worker.tasks.chunker_task import chunk_paper
-from worker.tasks.indexing_task import index_paper_chunks
-from worker.tasks.parser_task import parse_paper
+from worker.tasks.paper_chunking_task import paper_chunker_task_route
+from worker.tasks.paper_indexing_task import paper_indexing_task_route
+from worker.tasks.paper_parsing_task import paper_parser_task_route
 
 __all__ = [
-    "parse_paper",
-    "chunk_paper",
-    "index_paper_chunks",
+    "paper_chunker_task_route",
+    "paper_indexing_task_route",
+    "paper_parser_task_route",
 ]
