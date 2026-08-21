@@ -46,6 +46,15 @@ T = TypeVar("T")
 
 
 def worker_async_run(awaitable: Awaitable[T]) -> T:
+    """
+    Run an async function to completion inside the worker's event loop
+
+    Args:
+        awaitable: the given async function to be executed by worker
+
+    Returns:
+        The same result and type that awaited async function returns
+    """
     global _worker_event_loop
 
     with _event_loop_lock:
@@ -55,16 +64,27 @@ def worker_async_run(awaitable: Awaitable[T]) -> T:
         return _worker_event_loop.run_until_complete(awaitable)
 
 
+def shutdown_worker_event_loop() -> None:
+    global _worker_event_loop
+
+    with _event_loop_lock:
+        if _worker_event_loop is not None and not _worker_event_loop.is_closed():
+            _worker_event_loop.close()
+
+        _worker_event_loop = None
+
+
 def _settings_key(settings: Any) -> str:
+    """
+    Parse pydantic settings class to string for comparison
+    """
     model_dump_json = getattr(settings, "model_dump_json", None)
 
-    if callable(model_dump_json):
-        return str(model_dump_json())
-
-    return repr(settings)
+    return str(model_dump_json()) if callable(model_dump_json) else repr(settings)
 
 
 def get_worker_database(settings: Settings | None = None) -> DatabaseProvider:
+    """Create or get existing database provider for all workers"""
     settings = settings or get_settings()
     database_url = settings.postgres_settings.db_url
 
@@ -82,7 +102,20 @@ def get_worker_database(settings: Settings | None = None) -> DatabaseProvider:
         return _worker_database
 
 
+def shutdown_worker_database() -> None:
+    """Shutdown database provider when worker process exits"""
+    global _worker_database, _worker_database_url
+
+    with _database_lock:
+        if _worker_database is not None:
+            _worker_database.shutdown()
+
+        _worker_database = None
+        _worker_database_url = None
+
+
 def get_worker_storage(settings: Settings | None = None) -> StorageProvider:
+    """Create or get existing object storage provider for all workers"""
     settings = settings or get_settings()
     storage_key = _settings_key(settings.s3_settings)
 
@@ -94,14 +127,28 @@ def get_worker_storage(settings: Settings | None = None) -> StorageProvider:
                 _worker_storage.close()
 
             _worker_storage = create_s3_storage(settings)
+            _worker_storage.ensure_bucket_exists()
             _worker_storage_key = storage_key
 
         return _worker_storage
 
 
+def shutdown_worker_storage() -> None:
+    """Shutdown object storage provider when worker process exits"""
+    global _worker_storage, _worker_storage_key
+
+    with _storage_lock:
+        if _worker_storage is not None:
+            _worker_storage.close()
+
+        _worker_storage = None
+        _worker_storage_key = None
+
+
 def get_worker_elasticsearch_client(
     settings: Settings | None = None,
 ) -> ElasticsearchClient:
+    """Create or get existing elasticsearch client for all workers"""
     settings = settings or get_settings()
     elasticsearch_key = _settings_key(settings.elasticsearch_settings)
 
@@ -121,9 +168,22 @@ def get_worker_elasticsearch_client(
         return _worker_elasticsearch_client
 
 
+def shutdown_worker_elasticsearch_client() -> None:
+    """Shutdown elasticsearch client when worker process exits"""
+    global _worker_elasticsearch_client, _worker_elasticsearch_key
+
+    with _elasticsearch_lock:
+        if _worker_elasticsearch_client is not None:
+            _worker_elasticsearch_client.close()
+
+        _worker_elasticsearch_client = None
+        _worker_elasticsearch_key = None
+
+
 def get_worker_embedding_provider(
     settings: Settings | None = None,
 ) -> EmbeddingProvider:
+    """Create or get embedding model provider for all workers"""
     settings = settings or get_settings()
     embedding_key = _settings_key(settings.embedding_settings)
 
@@ -140,7 +200,20 @@ def get_worker_embedding_provider(
         return _worker_embedding_provider
 
 
+def shutdown_worker_embedding_provider() -> None:
+    """Shutdown embedding model provider when worker process exits"""
+    global _worker_embedding_provider, _worker_embedding_key
+
+    with _embedding_lock:
+        if _worker_embedding_provider is not None:
+            worker_async_run(_worker_embedding_provider.close())
+
+        _worker_embedding_provider = None
+        _worker_embedding_key = None
+
+
 def get_worker_pdf_downloader(settings: Settings | None = None) -> PDFDownloader:
+    """Create or get pdf downloader client for all workers"""
     settings = settings or get_settings()
     pdf_downloader_key = _settings_key(settings.arxiv_settings)
 
@@ -163,51 +236,8 @@ def get_worker_pdf_downloader(settings: Settings | None = None) -> PDFDownloader
         return _worker_pdf_downloader
 
 
-def shutdown_worker_database() -> None:
-    global _worker_database, _worker_database_url
-
-    with _database_lock:
-        if _worker_database is not None:
-            _worker_database.shutdown()
-
-        _worker_database = None
-        _worker_database_url = None
-
-
-def shutdown_worker_storage() -> None:
-    global _worker_storage, _worker_storage_key
-
-    with _storage_lock:
-        if _worker_storage is not None:
-            _worker_storage.close()
-
-        _worker_storage = None
-        _worker_storage_key = None
-
-
-def shutdown_worker_elasticsearch_client() -> None:
-    global _worker_elasticsearch_client, _worker_elasticsearch_key
-
-    with _elasticsearch_lock:
-        if _worker_elasticsearch_client is not None:
-            _worker_elasticsearch_client.close()
-
-        _worker_elasticsearch_client = None
-        _worker_elasticsearch_key = None
-
-
-def shutdown_worker_embedding_provider() -> None:
-    global _worker_embedding_provider, _worker_embedding_key
-
-    with _embedding_lock:
-        if _worker_embedding_provider is not None:
-            worker_async_run(_worker_embedding_provider.close())
-
-        _worker_embedding_provider = None
-        _worker_embedding_key = None
-
-
 def shutdown_worker_pdf_downloader() -> None:
+    """Shutdown pdf downloader client  when worker process exits"""
     global _worker_pdf_downloader, _worker_pdf_downloader_key
 
     with _pdf_downloader_lock:
@@ -218,17 +248,7 @@ def shutdown_worker_pdf_downloader() -> None:
         _worker_pdf_downloader_key = None
 
 
-def shutdown_worker_event_loop() -> None:
-    global _worker_event_loop
-
-    with _event_loop_lock:
-        if _worker_event_loop is not None and not _worker_event_loop.is_closed():
-            _worker_event_loop.close()
-
-        _worker_event_loop = None
-
-
-def shutdown_worker_resources() -> None:
+def shutdown_all_instances() -> None:
     shutdown_worker_embedding_provider()
     shutdown_worker_pdf_downloader()
     shutdown_worker_elasticsearch_client()
@@ -237,13 +257,16 @@ def shutdown_worker_resources() -> None:
     shutdown_worker_event_loop()
 
 
-atexit.register(shutdown_worker_resources)
+atexit.register(shutdown_all_instances)
 
 
 @contextmanager
-def worker_db_session(
+def get_db_session(
     settings: Settings | None = None,
 ) -> Generator[Session, None, None]:
+    """
+    Get database provider session
+    """
     database = get_worker_database(settings)
 
     with database.get_session() as session:
@@ -251,52 +274,54 @@ def worker_db_session(
 
 
 @contextmanager
-def worker_session(
+def get_db_storage_session(
     settings: Settings | None = None,
 ) -> Generator[tuple[Session, StorageProvider], None, None]:
+    """
+    Get both database and object storage provider session
+    """
     settings = settings or get_settings()
 
     database = get_worker_database(settings)
     storage = get_worker_storage(settings)
-
-    storage.ensure_bucket_exists()
 
     with database.get_session() as session:
         yield session, storage
 
 
 @contextmanager
-def pdf_download_resources(
+def get_pdf_download_session(
     settings: Settings | None = None,
 ) -> Generator[tuple[Session, StorageProvider, PDFDownloader], None, None]:
+    """
+    Get all necessary provider session for pdf download worker
+    """
     settings = settings or get_settings()
 
     database = get_worker_database(settings)
     storage = get_worker_storage(settings)
     pdf_downloader = get_worker_pdf_downloader(settings)
 
-    storage.ensure_bucket_exists()
-
     with database.get_session() as session:
         yield session, storage, pdf_downloader
 
 
 @contextmanager
-def indexing_resources(
+def get_indexing_session(
     settings: Settings | None = None,
 ) -> Generator[
-    tuple[Session, StorageProvider, EmbeddingProvider, ElasticsearchClient],
+    tuple[Session, EmbeddingProvider, ElasticsearchClient],
     None,
     None,
 ]:
+    """
+    Get all necessary provider session for paper indexing worker
+    """
     settings = settings or get_settings()
 
-    database: DatabaseProvider = get_worker_database(settings)
-    storage = get_worker_storage(settings)
+    database = get_worker_database(settings)
     embedding_provider = get_worker_embedding_provider(settings)
     elasticsearch_client = get_worker_elasticsearch_client(settings)
 
-    storage.ensure_bucket_exists()
-
     with database.get_session() as session:
-        yield session, storage, embedding_provider, elasticsearch_client
+        yield session, embedding_provider, elasticsearch_client
