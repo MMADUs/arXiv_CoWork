@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from rag.db.model import (
@@ -27,14 +27,18 @@ class PaperRepository:
         self.session = session
 
     def get_by_id(self, paper_id: UUID) -> PaperModel | None:
+        """
+        Get paper by id
+        """
         statement = select(PaperModel).where(PaperModel.id == paper_id)
         return self.session.scalar(statement)
 
     def get_by_id_for_update(self, paper_id: UUID) -> PaperModel | None:
+        """
+        Get paper by id and lock the row for futher updates/modification
+        """
         statement = (
-            select(PaperModel)
-            .where(PaperModel.id == paper_id)
-            .with_for_update()
+            select(PaperModel).where(PaperModel.id == paper_id).with_for_update()
         )
         return self.session.scalar(statement)
 
@@ -42,36 +46,55 @@ class PaperRepository:
         statement = select(PaperModel).where(PaperModel.arxiv_id == arxiv_id)
         return self.session.scalar(statement)
 
-    def list_recent(self, limit: int = 50, offset: int = 0) -> list[PaperModel]:
-        statement = (
-            select(PaperModel)
-            .order_by(PaperModel.published_date.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-        return list(self.session.scalars(statement))
+    def delete(self, paper: PaperModel) -> None:
+        self.session.delete(paper)
 
-    def list_failed(self, limit: int = 50, offset: int = 0) -> list[PaperModel]:
-        statement = (
-            select(PaperModel)
-            .where(
-                or_(
-                    PaperModel.ingestion_status.in_(
-                        [
-                            PaperIngestionStatus.METADATA_FAILED,
-                            PaperIngestionStatus.PDF_FAILED,
-                        ]
-                    ),
-                    PaperModel.parser_status == PaperParserStatus.FAILED,
-                    PaperModel.chunking_status == PaperChunkingStatus.FAILED,
-                    PaperModel.indexing_status == PaperIndexingStatus.FAILED,
-                )
-            )
-            .order_by(PaperModel.updated_at.desc(), PaperModel.published_date.desc())
+    def list_recent_page(
+        self, limit: int = 50, offset: int = 0
+    ) -> tuple[list[PaperModel], int]:
+        base_statement = select(PaperModel)
+        total_statement = select(func.count()).select_from(base_statement.subquery())
+        page_statement = (
+            base_statement.order_by(PaperModel.published_date.desc())
             .limit(limit)
             .offset(offset)
         )
-        return list(self.session.scalars(statement))
+
+        papers = list(self.session.scalars(page_statement))
+        total = self.session.scalar(total_statement) or 0
+
+        return papers, total
+
+    def list_failed_page(
+        self, limit: int = 50, offset: int = 0
+    ) -> tuple[list[PaperModel], int]:
+        base_statement = select(PaperModel).where(
+            or_(
+                PaperModel.ingestion_status.in_(
+                    [
+                        PaperIngestionStatus.METADATA_FAILED,
+                        PaperIngestionStatus.PDF_FAILED,
+                    ]
+                ),
+                PaperModel.parser_status == PaperParserStatus.FAILED,
+                PaperModel.chunking_status == PaperChunkingStatus.FAILED,
+                PaperModel.indexing_status == PaperIndexingStatus.FAILED,
+            )
+        )
+        total_statement = select(func.count()).select_from(base_statement.subquery())
+        page_statement = (
+            base_statement.order_by(
+                PaperModel.updated_at.desc(),
+                PaperModel.published_date.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+
+        papers = list(self.session.scalars(page_statement))
+        total = self.session.scalar(total_statement) or 0
+
+        return papers, total
 
     def upsert_from_arxiv(self, arxiv_paper: ArxivPaperMetadata) -> PaperModel:
         """
@@ -115,6 +138,7 @@ class PaperRepository:
         )
         existing_paper.doi = arxiv_paper.doi
 
+        # If the PDF is not stored yet, make refreshed metadata eligible for download.
         if existing_paper.pdf_object_key is None:
             existing_paper.ingestion_status = PaperIngestionStatus.METADATA_FETCHED
 
@@ -186,6 +210,18 @@ class PaperRepository:
         limit: int = 50,
         include_failed: bool = False,
     ) -> list[PaperModel]:
+        """
+        Get all papers where indexing status is `PaperIndexingStatus.PENDING`
+
+        this also includes papers with status `PaperParserStatus.FAILED` and `PaperChunkingStatus.FAILED`
+        because they're failed on prior indexing stages
+
+        Args:
+            limit:
+                the most amount of paper to be listed
+            include_failed:
+                include papers with status of `PaperIndexingStatus.FAILED`
+        """
         statuses = [PaperIndexingStatus.PENDING]
 
         if include_failed:
@@ -204,9 +240,7 @@ class PaperRepository:
         if not include_failed:
             statement = statement.where(
                 PaperModel.parser_status != PaperParserStatus.FAILED
-            ).where(
-                PaperModel.chunking_status != PaperChunkingStatus.FAILED
-            )
+            ).where(PaperModel.chunking_status != PaperChunkingStatus.FAILED)
 
         return list(self.session.scalars(statement))
 
@@ -289,6 +323,15 @@ class PaperRepository:
         mark paper status when parsed content produced no chunks
         """
         paper.chunking_status = PaperChunkingStatus.NO_CHUNKS
+        paper.chunking_error = None
+        paper.indexing_status = PaperIndexingStatus.PENDING
+        paper.indexing_error = None
+        paper.updated_at = datetime.now(timezone.utc)
+
+        return paper
+
+    def mark_chunks_removed(self, paper: PaperModel) -> PaperModel:
+        paper.chunking_status = PaperChunkingStatus.PENDING
         paper.chunking_error = None
         paper.indexing_status = PaperIndexingStatus.PENDING
         paper.indexing_error = None

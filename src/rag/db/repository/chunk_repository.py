@@ -38,6 +38,14 @@ class ChunkRepository:
         )
         return list(self.session.scalars(statement))
 
+    def count_by_paper_id(self, paper_id: UUID) -> int:
+        statement = select(func.count()).select_from(
+            select(ChunkModel.id)
+            .where(ChunkModel.paper_id == paper_id)
+            .subquery()
+        )
+        return self.session.scalar(statement) or 0
+
     def create_from_candidates(
         self,
         paper: PaperModel,
@@ -70,9 +78,10 @@ class ChunkRepository:
 
         return chunks
 
-    def delete_by_paper_id(self, paper_id: UUID) -> None:
+    def delete_by_paper_id(self, paper_id: UUID) -> int:
         statement = delete(ChunkModel).where(ChunkModel.paper_id == paper_id)
-        self.session.execute(statement)
+        result = self.session.execute(statement)
+        return int(result.rowcount or 0)
 
     def replace_paper_chunks(
         self,
@@ -134,7 +143,7 @@ class ChunkRepository:
 
         return list(self.session.scalars(statement))
 
-    def list_error_summaries_by_paper_ids(
+    def chunk_error_summaries_by_paper_ids(
         self,
         paper_ids: Iterable[UUID],
     ) -> dict[UUID, list[ChunkErrorSummary]]:
