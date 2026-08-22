@@ -13,6 +13,15 @@ from rag.db.config import Base
 
 
 class ChunkEmbeddingStatus(StrEnum):
+    """ 
+    Chunk embedding status string enum class
+
+    Available enum members:
+    - PENDING
+    - PROCESSING
+    - INDEXED
+    - FAILED
+    """
     PENDING = "pending"
     PROCESSING = "processing"
     EMBEDDED = "embedded"
@@ -20,6 +29,15 @@ class ChunkEmbeddingStatus(StrEnum):
 
 
 class ChunkIndexingStatus(StrEnum):
+    """ 
+    Chunk indexing status string enum class
+
+    Available enum members:
+    - PENDING
+    - PROCESSING
+    - INDEXED
+    - FAILED
+    """
     PENDING = "pending"
     PROCESSING = "processing"
     INDEXED = "indexed"

@@ -14,6 +14,17 @@ from rag.db.config import Base
 
 
 class PaperIngestionStatus(StrEnum):
+    """ 
+    Paper ingrstion status string enum class
+
+    Available enum members:
+    - PENDING
+    - METADATA_FETCHED
+    - METADATA_FAILED
+    - PDF_DOWNLOADING
+    - PDF_STORED
+    - PDF_FAILED
+    """
     PENDING = "pending"
     METADATA_FETCHED = "metadata_fetched"
     METADATA_FAILED = "metadata_failed"
@@ -23,6 +34,15 @@ class PaperIngestionStatus(StrEnum):
 
 
 class PaperParserStatus(StrEnum):
+    """
+    Paper parsing status string enum class
+
+    Available enum members:
+    - PENDING
+    - PARSING
+    - PARSED
+    - FAILED
+    """
     PENDING = "pending"
     PARSING = "parsing"
     PARSED = "parsed"
@@ -30,6 +50,15 @@ class PaperParserStatus(StrEnum):
 
 
 class PaperChunkingStatus(StrEnum):
+    """
+    Paper chunking status string enum class
+
+    Available enum members:
+    - PENDING
+    - CHUNKING
+    - NO_CHUNKS
+    - FAILED
+    """
     PENDING = "pending"
     CHUNKING = "chunking"
     CHUNKED = "chunked"
@@ -38,6 +67,15 @@ class PaperChunkingStatus(StrEnum):
 
 
 class PaperIndexingStatus(StrEnum):
+    """
+    Paper indexing status string enum class
+
+    Available enum members:
+    - PENDING
+    - INDEXING
+    - INDEXED
+    - FAILED
+    """
     PENDING = "pending"
     INDEXING = "indexing"
     INDEXED = "indexed"
