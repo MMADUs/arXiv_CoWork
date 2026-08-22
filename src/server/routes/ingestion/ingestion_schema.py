@@ -10,7 +10,11 @@ from pydantic import BaseModel, Field
 from rag.schema import ArxivQueryParams
 
 
-class ArxivIngestRequest(BaseModel):
+class PaperIngestionRequest(BaseModel):
+    """
+    Router request schema for arxiv paper ingestion payload
+    """
+
     keywords: list[str] | None = Field(default=None)
     title: list[str] | None = Field(default=None)
     abstract: list[str] | None = Field(default=None)
@@ -22,13 +26,14 @@ class ArxivIngestRequest(BaseModel):
     submitted_to: datetime | None = Field(default=None)
     max_results: int = Field(default=10, ge=1, le=2000)
     start: int = Field(default=0, ge=0)
-    sort_by: Literal["relevance", "lastUpdatedDate", "submittedDate"] = (
-        "submittedDate"
-    )
+    sort_by: Literal["relevance", "lastUpdatedDate", "submittedDate"] = "submittedDate"
     sort_order: Literal["ascending", "descending"] = "descending"
     download_pdf: bool = False
 
     def to_arxiv_query_params(self) -> ArxivQueryParams:
+        """
+        Parse request payload into `ArxivQueryParams`
+        """
         if not self.has_search_signal():
             raise ValueError("At least one search field or ids must be provided")
 
@@ -52,13 +57,17 @@ class ArxivIngestRequest(BaseModel):
         )
 
     def has_search_signal(self) -> bool:
+        """
+        Check for a valid searchable field, at least one of them should exist
+
+        This includes: keywords, title, abstract, authros, categories and arxiv ids
+        """
         search_fields = [
             self.keywords,
             self.title,
             self.abstract,
             self.authors,
             self.categories,
-            self.exclude_categories,
             self.ids,
         ]
 
@@ -72,20 +81,25 @@ class ArxivIngestRequest(BaseModel):
 
 
 class PaperIngestionItem(BaseModel):
+    """
+    Ingested paper item metadata, used as response item from bulk process
+    """
+
     paper_id: UUID
     arxiv_id: str | None
     title: str | None
     authors: list[str]
     categories: list[str]
     published_date: datetime | None
-    ingestion_status: str | None
-    pdf_object_key: str | None
     pdf_download_task_id: str | None = None
     pdf_download_status: str | None = None
-    download_error: str | None = None
 
 
 class ArxivIngestResponse(BaseModel):
+    """
+    Route response schema for arxiv paper ingestion result
+    """
+
     papers_fetched: int
     papers_stored: int
     download_pdf: bool
@@ -95,25 +109,39 @@ class ArxivIngestResponse(BaseModel):
 
 
 class DownloadPaperRequest(BaseModel):
+    """
+    Router request schema for pdf paper download payload
+    """
+
     force_download: bool = False
 
 
 class DownloadPendingPapersRequest(BaseModel):
+    """
+    Router request schema for download all pending pdf paper download payload
+    """
+
     limit: int = Field(default=50, ge=1, le=500)
     include_failed: bool = False
 
 
 class DownloadPaperItem(BaseModel):
+    """
+    Downloaded paper item metadata, used as response item from bulk process
+    """
+
     paper_id: UUID
     arxiv_id: str
     title: str
-    ingestion_status: str
-    pdf_object_key: str | None
     task_id: str | None
-    status: Literal["queued", "already_downloaded", "already_downloading"]
+    pdf_download_status: str
 
 
 class DownloadPaperResponse(BaseModel):
+    """
+    Route response schema for pdf paper download result
+    """
+
     requested: int
     queued: int
     skipped: int

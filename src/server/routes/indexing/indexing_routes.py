@@ -31,7 +31,7 @@ router = APIRouter(prefix="/papers", tags=["paper-indexing"])
     response_model=IndexPapersResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def enqueue_indexing_route(
+def pending_indexing_route(
     request: IndexPendingPapersRequest,
     session: Session = Depends(get_db_session),
 ) -> IndexPapersResponse:
@@ -60,7 +60,7 @@ def enqueue_indexing_route(
     response_model=IndexPaperResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def enqueue_indexing_by_id_route(
+def indexing_by_id_route(
     paper_id: UUID,
     request: IndexPaperRequest,
     session: Session = Depends(get_db_session),

@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from rag.db.model import PaperIngestionStatus, PaperModel
 from rag.db.repository import PaperRepository
-from server.routes.ingestion.schema import DownloadPaperItem, PaperIngestionItem
-from worker.payloads import PaperPdfDownloadPayload
+from server.routes.ingestion.ingestion_schema import DownloadPaperItem, PaperIngestionItem
+from worker.queue_schema import PdfDownloadQueue
 from worker.workflow import enqueue_paper_pdf_download
 
 
@@ -53,7 +53,7 @@ def enqueue_pending_pdf_downloads(
     ]
 
 
-def enqueue_pdf_downloads_for_ingested_papers(
+def enqueue_ingested_pdf_downloads(
     paper_ids: list[UUID],
     session: Session,
 ) -> list[PaperIngestionItem]:
@@ -72,10 +72,6 @@ def enqueue_pdf_downloads_for_ingested_papers(
                     authors=[],
                     categories=[],
                     published_date=None,
-                    ingestion_status=None,
-                    pdf_object_key=None,
-                    pdf_download_status="not_found",
-                    download_error="Paper not found",
                 )
             )
             continue
@@ -86,22 +82,22 @@ def enqueue_pdf_downloads_for_ingested_papers(
             session=session,
             force_download=False,
         )
+
         results.append(
-            paper_ingestion_item(
+            _paper_ingestion_item(
                 paper=paper,
                 pdf_download_task_id=download_item.task_id,
-                pdf_download_status=download_item.status,
+                pdf_download_status=download_item.pdf_download_status,
             )
         )
 
     return results
 
 
-def paper_ingestion_item(
+def _paper_ingestion_item(
     paper: PaperModel,
     pdf_download_task_id: str | None = None,
     pdf_download_status: str | None = None,
-    download_error: str | None = None,
 ) -> PaperIngestionItem:
     return PaperIngestionItem(
         paper_id=paper.id,
@@ -110,32 +106,13 @@ def paper_ingestion_item(
         authors=paper.authors,
         categories=paper.categories,
         published_date=paper.published_date,
-        ingestion_status=paper.ingestion_status,
-        pdf_object_key=paper.pdf_object_key,
         pdf_download_task_id=pdf_download_task_id,
         pdf_download_status=pdf_download_status,
-        download_error=download_error,
     )
 
 
-def queued_download_count(papers: list[PaperIngestionItem]) -> int:
-    return sum(1 for paper in papers if paper.pdf_download_status == "queued")
-
-
-def skipped_download_count(papers: list[PaperIngestionItem]) -> int:
-    return sum(
-        1
-        for paper in papers
-        if paper.pdf_download_status in {"already_downloaded", "already_downloading"}
-    )
-
-
-def queued_download_item_count(papers: list[DownloadPaperItem]) -> int:
-    return sum(1 for paper in papers if paper.status == "queued")
-
-
-def skipped_download_item_count(papers: list[DownloadPaperItem]) -> int:
-    return sum(1 for paper in papers if paper.status != "queued")
+# declare as variable instead for consistency reason
+SUCCESSFUL_QUEUE = "download_in_queue"
 
 
 def _enqueue_pdf_download_for_paper(
@@ -148,14 +125,14 @@ def _enqueue_pdf_download_for_paper(
         return _download_item(
             paper=paper,
             task_id=None,
-            status="already_downloaded",
+            pdf_download_status=PaperIngestionStatus.PDF_STORED,
         )
 
     if paper.ingestion_status == PaperIngestionStatus.PDF_DOWNLOADING:
         return _download_item(
             paper=paper,
             task_id=None,
-            status="already_downloading",
+            pdf_download_status=PaperIngestionStatus.PDF_DOWNLOADING,
         )
 
     paper_repository.mark_pdf_download_started(paper)
@@ -163,7 +140,7 @@ def _enqueue_pdf_download_for_paper(
 
     try:
         task_id = enqueue_paper_pdf_download(
-            PaperPdfDownloadPayload(
+            PdfDownloadQueue(
                 paper_id=paper.id,
                 force_download=force_download,
             )
@@ -180,21 +157,40 @@ def _enqueue_pdf_download_for_paper(
     return _download_item(
         paper=paper,
         task_id=task_id,
-        status="queued",
+        pdf_download_status=SUCCESSFUL_QUEUE,
     )
 
 
 def _download_item(
     paper: PaperModel,
     task_id: str | None,
-    status: str,
+    pdf_download_status: str,
 ) -> DownloadPaperItem:
     return DownloadPaperItem(
         paper_id=paper.id,
         arxiv_id=paper.arxiv_id,
         title=paper.title,
-        ingestion_status=paper.ingestion_status,
-        pdf_object_key=paper.pdf_object_key,
         task_id=task_id,
-        status=status,
+        pdf_download_status=pdf_download_status,
+    )
+
+
+def queued_download_count(
+    papers: (
+        list[PaperIngestionItem] | list[DownloadPaperItem]
+    ),  # both type should at least have the attribute `pdf_download_status` (error prone)
+) -> int:
+    return sum(1 for paper in papers if paper.pdf_download_status == SUCCESSFUL_QUEUE)
+
+
+def skipped_download_count(
+    papers: (
+        list[PaperIngestionItem] | list[DownloadPaperItem]
+    ),  # both type should at least have the attribute `pdf_download_status` (error prone)
+) -> int:
+    return sum(
+        1
+        for paper in papers
+        if paper.pdf_download_status
+        in {PaperIngestionStatus.PDF_STORED, PaperIngestionStatus.PDF_DOWNLOADING}
     )

@@ -8,17 +8,16 @@ from sqlalchemy.orm import Session
 
 from rag.service.arxiv import ArxivClient, ArxivIngestionService
 from server.dependencies import get_arxiv_client, get_db_session
-from server.routes.ingestion.helpers import (
+from server.routes.ingestion.ingestion_helpers import (
     enqueue_pdf_download_by_id,
-    enqueue_pdf_downloads_for_ingested_papers,
+    enqueue_ingested_pdf_downloads,
     enqueue_pending_pdf_downloads,
     queued_download_count,
-    queued_download_item_count,
     skipped_download_count,
-    skipped_download_item_count,
+    SUCCESSFUL_QUEUE,
 )
-from server.routes.ingestion.schema import (
-    ArxivIngestRequest,
+from server.routes.ingestion.ingestion_schema import (
+    PaperIngestionRequest,
     ArxivIngestResponse,
     DownloadPaperRequest,
     DownloadPaperResponse,
@@ -30,8 +29,8 @@ router = APIRouter(prefix="/papers", tags=["paper-ingestion"])
 
 
 @router.post("/ingest", response_model=ArxivIngestResponse)
-async def ingest_arxiv_papers(
-    request: ArxivIngestRequest,
+async def ingest_paper_route(
+    request: PaperIngestionRequest,
     session: Session = Depends(get_db_session),
     arxiv_client: ArxivClient = Depends(get_arxiv_client),
 ) -> ArxivIngestResponse:
@@ -66,15 +65,13 @@ async def ingest_arxiv_papers(
             authors=paper.authors,
             categories=paper.categories,
             published_date=paper.published_date,
-            ingestion_status=paper.ingestion_status,
-            pdf_object_key=paper.pdf_object_key,
         )
         for paper in ingestion_result.papers
     ]
 
     if request.download_pdf:
         try:
-            papers = enqueue_pdf_downloads_for_ingested_papers(
+            papers = enqueue_ingested_pdf_downloads(
                 paper_ids=[paper.paper_id for paper in papers],
                 session=session,
             )
@@ -104,7 +101,7 @@ async def ingest_arxiv_papers(
     response_model=DownloadPaperResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def enqueue_pending_arxiv_paper_pdf_downloads(
+def pending_pdf_download_route(
     request: DownloadPendingPapersRequest,
     session: Session = Depends(get_db_session),
 ) -> DownloadPaperResponse:
@@ -123,8 +120,8 @@ def enqueue_pending_arxiv_paper_pdf_downloads(
 
     return DownloadPaperResponse(
         requested=len(papers),
-        queued=queued_download_item_count(papers),
-        skipped=skipped_download_item_count(papers),
+        queued=queued_download_count(papers),
+        skipped=skipped_download_count(papers),
         papers=papers,
     )
 
@@ -134,7 +131,7 @@ def enqueue_pending_arxiv_paper_pdf_downloads(
     response_model=DownloadPaperResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def enqueue_arxiv_paper_pdf_download(
+def pdf_download_by_id_route(
     paper_id: UUID,
     request: DownloadPaperRequest,
     session: Session = Depends(get_db_session),
@@ -160,7 +157,7 @@ def enqueue_arxiv_paper_pdf_download(
 
     return DownloadPaperResponse(
         requested=1,
-        queued=1 if item.status == "queued" else 0,
-        skipped=0 if item.status == "queued" else 1,
+        queued=1 if item.pdf_download_status == SUCCESSFUL_QUEUE else 0,
+        skipped=0 if item.pdf_download_status == SUCCESSFUL_QUEUE else 1,
         papers=[item],
     )

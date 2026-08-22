@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 class IndexPaperRequest(BaseModel):
     """
-    Router request schema for index paper by id
+    Router request schema for index paper by id payload
     """
 
     force_parse: bool = False
@@ -21,7 +21,7 @@ class IndexPaperRequest(BaseModel):
 
 class IndexPendingPapersRequest(IndexPaperRequest):
     """
-    Router request schema for index all pending papers
+    Router request schema for index all pending papers payload
     """
 
     limit: int = Field(default=50, ge=1, le=500)
@@ -51,7 +51,7 @@ class IndexPaperItem(BaseModel):
 
 class IndexPapersResponse(BaseModel):
     """
-    Router response schema for index all pending papers
+    Router response schema for index all pending papers result
     """
 
     requested: int
@@ -62,7 +62,7 @@ class IndexPapersResponse(BaseModel):
 
 class IndexPaperResponse(BaseModel):
     """
-    Router response schema for index paper by id
+    Router response schema for index paper by id result
     """
 
     paper_id: UUID
