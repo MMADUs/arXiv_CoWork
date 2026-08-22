@@ -5,28 +5,28 @@ from typing import Literal
 
 from rag.db.model import PaperModel
 from rag.db.repository.chunk_repository import ChunkErrorSummary
-from server.routes.papers.schema import (
-    ChunkErrorResponse,
-    CompactPaperResponse,
-    FullPaperResponse,
-    PaperArtifactsResponse,
-    PaperErrorsResponse,
-    PaperMetadataResponse,
-    PaperStatusResponse,
-    PaperTimestampsResponse,
+from server.routes.papers.papers_schema import (
+    ChunkErrorItem,
+    CompactPaperFormat,
+    FullPaperFormat,
+    ArtifactsResponseGroup,
+    ErrorsResponseGroup,
+    MetadataResponseGroup,
+    StatusResponseGroup,
+    TimestampsResponseGroup,
 )
 
 
-def paper_response(
+def build_paper_response(
     paper: PaperModel,
     output: Literal["compact", "full"],
     chunk_errors: list[ChunkErrorSummary] | None = None,
-) -> CompactPaperResponse | FullPaperResponse:
+) -> CompactPaperFormat | FullPaperFormat:
     if output == "full":
-        return FullPaperResponse(
+        return FullPaperFormat(
             paper_id=paper.id,
             arxiv_id=paper.arxiv_id,
-            metadata=PaperMetadataResponse(
+            metadata=MetadataResponseGroup(
                 version=paper.version,
                 title=paper.title,
                 authors=paper.authors,
@@ -36,24 +36,24 @@ def paper_response(
                 pdf_url=paper.pdf_url,
                 doi=paper.doi,
             ),
-            artifacts=PaperArtifactsResponse(
+            artifacts=ArtifactsResponseGroup(
                 pdf_object_key=paper.pdf_object_key,
                 parsed_json_object_key=paper.parsed_json_object_key,
                 parser_name=paper.parser_name,
             ),
-            status=PaperStatusResponse(
+            status=StatusResponseGroup(
                 ingestion_status=paper.ingestion_status,
                 parser_status=paper.parser_status,
                 chunking_status=paper.chunking_status,
                 indexing_status=paper.indexing_status,
             ),
-            errors=PaperErrorsResponse(
+            errors=ErrorsResponseGroup(
                 pdf_download_error=paper.pdf_download_error,
                 parser_error=paper.parser_error,
                 chunking_error=paper.chunking_error,
                 indexing_error=paper.indexing_error,
                 chunk_errors=[
-                    ChunkErrorResponse(
+                    ChunkErrorItem(
                         stage=error.stage,
                         message=error.message,
                         count=error.count,
@@ -61,13 +61,13 @@ def paper_response(
                     for error in chunk_errors or []
                 ],
             ),
-            timestamps=PaperTimestampsResponse(
+            timestamps=TimestampsResponseGroup(
                 created_at=paper.created_at,
                 updated_at=paper.updated_at,
             ),
         )
 
-    return CompactPaperResponse(
+    return CompactPaperFormat(
         paper_id=paper.id,
         arxiv_id=paper.arxiv_id,
         title=paper.title,

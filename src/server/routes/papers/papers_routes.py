@@ -1,6 +1,7 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
+from math import ceil
 from typing import Literal
 from uuid import UUID
 
@@ -9,44 +10,54 @@ from sqlalchemy.orm import Session
 
 from rag.db.repository import ChunkRepository, PaperRepository
 from server.dependencies import get_db_session
-from server.routes.papers.helpers import paper_response
-from server.routes.papers.schema import PaperDetailResponse, PaperListResponse
+from server.routes.papers.papers_helpers import build_paper_response
+from server.routes.papers.papers_schema import PaperDetailResponse, PaperListResponse
 
 router = APIRouter(prefix="/papers", tags=["manage-paper"])
 
 
 @router.get("", response_model=PaperListResponse)
-def list_arxiv_papers(
+def get_all_papers(
     output: Literal["compact", "full"] = "compact",
     status_filter: Literal["failed"] | None = Query(default=None, alias="status"),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_db_session),
 ) -> PaperListResponse:
     paper_repository = PaperRepository(session)
+    chunk_repository = ChunkRepository(session)
+
+    offset = (page - 1) * page_size
 
     if status_filter == "failed":
-        papers = paper_repository.list_failed(limit=limit, offset=offset)
+        papers, total = paper_repository.list_failed_page(
+            limit=page_size,
+            offset=offset,
+        )
     else:
-        papers = paper_repository.list_recent(limit=limit, offset=offset)
+        papers, total = paper_repository.list_recent_page(
+            limit=page_size,
+            offset=offset,
+        )
 
     chunk_errors_by_paper_id = {}
 
     if output == "full":
-        chunk_errors_by_paper_id = (
-            ChunkRepository(session).list_error_summaries_by_paper_ids(
-                paper.id for paper in papers
-            )
+        chunk_errors_by_paper_id = chunk_repository.chunk_error_summaries_by_paper_ids(
+            paper.id for paper in papers
         )
 
     return PaperListResponse(
         output=output,
         status=status_filter,
         count=len(papers),
-        limit=limit,
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=ceil(total / page_size) if total else 0,
         offset=offset,
         papers=[
-            paper_response(
+            build_paper_response(
                 paper=paper,
                 output=output,
                 chunk_errors=chunk_errors_by_paper_id.get(paper.id, []),
@@ -63,6 +74,8 @@ def get_arxiv_paper(
     session: Session = Depends(get_db_session),
 ) -> PaperDetailResponse:
     paper_repository = PaperRepository(session)
+    chunk_repository = ChunkRepository(session)
+
     paper = paper_repository.get_by_id(paper_id)
 
     if paper is None:
@@ -74,13 +87,13 @@ def get_arxiv_paper(
     chunk_errors = []
 
     if output == "full":
-        chunk_errors = ChunkRepository(session).list_error_summaries_by_paper_ids(
+        chunk_errors = chunk_repository.chunk_error_summaries_by_paper_ids(
             [paper.id]
         ).get(paper.id, [])
 
     return PaperDetailResponse(
         output=output,
-        paper=paper_response(
+        paper=build_paper_response(
             paper=paper,
             output=output,
             chunk_errors=chunk_errors,
