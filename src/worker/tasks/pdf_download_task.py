@@ -8,14 +8,19 @@ from celery import Task
 
 from rag.db.model import PaperModel
 from rag.db.repository import PaperRepository
-from rag.service.arxiv import PaperDownloadService
-from worker.celery_app import celery_app, PDF_DOWNLOAD_ROUTE
-from worker.queue_schema import PdfDownloadQueue
+from rag.service.arxiv import (
+    ArxivNonRetryableError,
+    ArxivPaperNotFoundError,
+    ArxivRetryableError,
+    PaperDownloadService,
+)
+from worker.celery_app import PDF_DOWNLOAD_ROUTE, celery_app
 from worker.instances import (
+    get_db_session,
     get_pdf_download_session,
     worker_async_run,
-    get_db_session,
 )
+from worker.queue_schema import PdfDownloadQueue
 from worker.tasks.common import (
     RetryableStageError,
     celery_settings,
@@ -35,11 +40,11 @@ def pdf_download_task_route(self: Task, payload: dict[str, Any]) -> dict[str, An
     try:
         return worker_async_run(_download_paper_pdf(task_payload))
 
-    except ValueError as error:
+    except ArxivNonRetryableError as error:
         _mark_paper_pdf_download_failed(task_payload.paper_id, str(error))
-        raise error
+        raise
 
-    except Exception as error:
+    except ArxivRetryableError as error:
         retry_or_fail(
             self,
             RetryableStageError(str(error)),
@@ -48,7 +53,6 @@ def pdf_download_task_route(self: Task, payload: dict[str, Any]) -> dict[str, An
                 str(error),
             ),
         )
-        raise
 
 
 async def _download_paper_pdf(
@@ -65,7 +69,7 @@ async def _download_paper_pdf(
         paper = paper_repository.get_by_id(task_payload.paper_id)
 
         if paper is None:
-            raise ValueError(f"Paper not found: {task_payload.paper_id}")
+            raise ArxivPaperNotFoundError(f"Paper not found: {task_payload.paper_id}")
 
         if paper.pdf_object_key and not task_payload.force_download:
             return _trace_result(task_payload, paper, skipped=True)
