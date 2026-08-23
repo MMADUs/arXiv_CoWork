@@ -7,10 +7,23 @@ from dataclasses import dataclass
 from rag.config import ChunkerSettings
 from rag.schema.document_schema import ParsedDocument, ParsedSection
 from rag.schema.chunk_schema import ChunkCandidate
+from rag.service.chunker.exceptions import ChunkerConfigurationError
 
 
 @dataclass(slots=True)
 class WordSpan:
+    """
+    Single token-like word span within a source text segment.
+
+    Attributes:
+        text: 
+            Word text.
+        start_char: 
+            Character offset where the word starts within its source segment.
+        end_char: 
+            Character offset where the word ends within its source segment.
+    """
+
     text: str
     start_char: int
     end_char: int
@@ -18,6 +31,25 @@ class WordSpan:
 
 @dataclass(slots=True)
 class SectionCandidate:
+    """
+    Normalized section-like text segment prepared for chunking.
+
+    The character offsets are relative to the section content, while word offsets
+    are relative to the full parsed document/chunking input.
+
+    Attributes:
+        title: 
+            Section title or generated fallback title.
+        content: 
+            Section body text.
+        start_word: 
+            Word offset where this section starts.
+        start_char: 
+            Character offset where this section starts.
+        words: 
+            Word spans contained in this section.
+    """
+
     title: str
     content: str
     start_word: int
@@ -47,13 +79,15 @@ class TextChunker:
     the strategy is section-aware when parsed sections exist, but falls back to
     word-window chunking.
 
-    filters obvious metadata sections, avoids abstract duplication, 
+    filters obvious metadata sections, avoids abstract duplication,
     merges tiny sections, and splits large sections with overlap.
     """
 
     def __init__(self, settings: ChunkerSettings) -> None:
         if settings.overlap_words >= settings.target_chunk_words:
-            raise ValueError("overlap_words must be less than target_chunk_words")
+            raise ChunkerConfigurationError(
+                "overlap_words must be less than target_chunk_words"
+            )
 
         self.settings = settings
 

@@ -4,13 +4,28 @@
 import logging
 from uuid import UUID
 
+from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from rag.config import get_settings
-from rag.db.repository import PaperRepository, ChunkRepository
-from rag.service.storage import StorageProvider
-from rag.service.chunker.text_chunker import TextChunker
+from rag.db.repository import ChunkRepository, PaperRepository
 from rag.schema.document_schema import ParsedDocument
+from rag.service.chunker.exceptions import (
+    ChunkerExecutionError,
+    ChunkerPaperNotFoundError,
+    ChunkerParsedDocumentNotFoundError,
+    ChunkerParsedDocumentValidationError,
+    ChunkerPersistenceError,
+    ChunkerServiceError,
+    ChunkerStorageError,
+)
+from rag.service.chunker.text_chunker import TextChunker
+from rag.service.storage import (
+    StorageDownloadError,
+    StorageJsonError,
+    StorageProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,27 +46,76 @@ class PaperChunkingService:
         self.storage = storage
         self.chunker = TextChunker(self.settings.chunker_settings)
 
-    def chunk_parsed_paper(self, paper_id: UUID) -> dict[str, int | str]:
+    def chunk_parsed_paper(self, paper_id: UUID) -> int:
+        """
+        Returns:
+            number of chunks created from paper id
+
+        Raises:
+            ChunkerPaperNotFoundError:
+                if paper does not exist locally
+            ChunkerParsedDocumentNotFoundError:
+                if paper has no parsed JSON artifact
+            ChunkerParsedDocumentValidationError:
+                if parsed document is invalid
+            ChunkerStorageError:
+                if parsed document download fails
+            ChunkerExecutionError:
+                if text chunking fails
+            ChunkerPersistenceError:
+                if local chunking state persistence fails
+        """
         try:
             paper = self.paper_repository.get_by_id(paper_id)
 
             if paper is None:
-                raise ValueError(f"Paper with id {paper_id} not found")
+                raise ChunkerPaperNotFoundError(f"Paper with id {paper_id} not found")
 
             if paper.parsed_json_object_key is None:
-                raise ValueError(f"Paper with id {paper_id} has no parsed JSON artifact")
+                raise ChunkerParsedDocumentNotFoundError(
+                    f"Paper with id {paper_id} has no parsed JSON artifact"
+                )
 
             self.paper_repository.mark_chunking_started(paper)
             self.session.commit()
 
-            parsed_json = self.storage.download_json(paper.parsed_json_object_key)
-            parsed_document = ParsedDocument.model_validate(parsed_json)
+            try:
+                parsed_json = self.storage.download_json(paper.parsed_json_object_key)
 
-            candidates = self.chunker.chunk_document(
-                title=paper.title,
-                abstract=paper.abstract,
-                parsed_document=parsed_document,
-            )
+            except StorageJsonError as error:
+                raise ChunkerParsedDocumentValidationError(
+                    "Failed to load parsed paper JSON artifact: "
+                    f"{paper.parsed_json_object_key}"
+                ) from error
+
+            except StorageDownloadError as error:
+                raise ChunkerStorageError(
+                    "Failed to download parsed paper JSON artifact: "
+                    f"{paper.parsed_json_object_key}"
+                ) from error
+
+            try:
+                parsed_document = ParsedDocument.model_validate(parsed_json)
+
+            except ValidationError as error:
+                raise ChunkerParsedDocumentValidationError(
+                    "Parsed paper JSON artifact is invalid: "
+                    f"{paper.parsed_json_object_key}"
+                ) from error
+
+            try:
+                candidates = self.chunker.chunk_document(
+                    title=paper.title,
+                    abstract=paper.abstract,
+                    parsed_document=parsed_document,
+                )
+
+            # NOTE: broad exception can catch tiny error that are not captured by custom exceptions
+            # since `.chunk_document()` itself does not throw any custom exceptions
+            except Exception as error:
+                raise ChunkerExecutionError(
+                    "TextChunker failed to chunk a parsed paper"
+                ) from error
 
             chunks = self.chunk_repository.replace_paper_chunks(
                 paper=paper,
@@ -66,29 +130,15 @@ class PaperChunkingService:
 
             self.session.commit()
 
-            total_words = sum(c.word_count for c in chunks)
-            average_words = int(total_words / len(chunks)) if chunks else 0
+            return len(chunks)
 
-            return {
-                "paper_id": str(paper.id),
-                "arxiv_id": paper.arxiv_id,
-                "chunks_created": len(chunks),
-                "average_chunk_words": average_words,
-            }
-
-        except ValueError:
+        except ChunkerServiceError:
+            self.session.rollback()
             raise
 
-        except Exception as error:
+        except SQLAlchemyError as error:
             self.session.rollback()
             logger.exception("Failed parsed paper chunking")
-            raise RuntimeError(_chunking_error_message(error)) from error
-
-
-def _chunking_error_message(error: Exception) -> str:
-    message = str(error).splitlines()[0]
-
-    if "NUL (0x00)" in str(error):
-        message = "PostgreSQL text fields cannot contain NUL (0x00) bytes"
-
-    return f"Failed parsed paper chunking: {message}"
+            raise ChunkerPersistenceError(
+                "Failed to persist paper chunking state"
+            ) from error

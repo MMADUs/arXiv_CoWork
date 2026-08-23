@@ -8,11 +8,15 @@ from celery import Task
 
 from rag.db.model import PaperModel
 from rag.db.repository import ChunkRepository, PaperRepository
-from rag.service.chunker import PaperChunkingService
+from rag.service.chunker import (
+    ChunkerNonRetryableError,
+    ChunkerRetryableError,
+    PaperChunkingService,
+)
 
-from worker.celery_app import celery_app, CHUNKING_ROUTE
+from worker.celery_app import CHUNKING_ROUTE, celery_app
+from worker.instances import get_db_session, get_db_storage_session
 from worker.queue_schema import IndexingQueue
-from worker.instances import get_db_storage_session, get_db_session
 from worker.tasks.common import (
     RetryableStageError,
     StagePrerequisiteError,
@@ -82,11 +86,11 @@ def paper_chunker_task_route(self: Task, payload: dict[str, Any]) -> dict[str, A
     except StagePrerequisiteError:
         raise
 
-    except ValueError as error:
+    except ChunkerNonRetryableError as error:
         _mark_paper_chunking_failed(task_payload.paper_id, str(error))
-        raise error
+        raise
 
-    except Exception as error:
+    except ChunkerRetryableError as error:
         retry_error = RetryableStageError(str(error))
 
         retry_or_fail(
@@ -97,7 +101,6 @@ def paper_chunker_task_route(self: Task, payload: dict[str, Any]) -> dict[str, A
                 str(retry_error),
             ),
         )
-        raise
 
 
 def _mark_paper_chunking_failed(paper_id: UUID, error: str) -> None:
