@@ -73,7 +73,8 @@ class DoclingParser(ParserStrategy):
         """
         Parse docling document structure into `ParsedSection`
 
-        to understand about docling document structure, visit: https://docling-project.github.io/docling/reference/docling_document/
+        to understand about docling document structure, visit: 
+        https://docling-project.github.io/docling/reference/docling_document/
         """
         sections: list[ParsedSection] = []
 

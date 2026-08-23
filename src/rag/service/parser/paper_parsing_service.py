@@ -2,18 +2,27 @@
 # SPDX-License-Identifier: MIT
 
 import logging
-from uuid import UUID
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from uuid import UUID
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from rag.config import get_settings
+from rag.db.model import PaperModel
 from rag.db.repository import PaperRepository
-from rag.service.storage import StorageProvider
-from rag.service.parser.parser_provider import ParserProvider
-from rag.service.arxiv import make_arxiv_id_safe
 from rag.schema.document_schema import ParsedDocument, ParsedSection
+from rag.service.arxiv import make_arxiv_id_safe
+from rag.service.parser.exceptions import (
+    ParserPaperNotFoundError,
+    ParserPdfNotStoredError,
+    ParserPersistenceError,
+    ParserServiceError,
+    ParserStorageError,
+)
+from rag.service.parser.parser_provider import ParserProvider
+from rag.service.storage import StorageProvider, StorageServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -40,26 +49,30 @@ class PaperParsingService:
             self.settings.parser_settings
         )
 
-    def parse_stored_pdf(self, paper_id: UUID) -> dict[str, str]:
+    def parse_stored_pdf(self, paper_id: UUID) -> str:
+        """
+        Returns:
+            name of the parser that produced the parsed document
+
+        Raises:
+            ParserPaperNotFoundError: 
+                if the paper does not exist locally.
+            ParserPdfNotStoredError: 
+                if the paper has no stored PDF object key.
+            ParserPdfValidationError: 
+                if the downloaded PDF fails parser validation.
+            ParserExecutionError: 
+                if PDF parsing fails.
+            ParserStorageError: 
+                if downloading the PDF or uploading parsed JSON fails.
+            ParserPersistenceError: 
+                if local parsing state persistence fails.
+        """
         paper = None
         parsing_started = False
 
         try:
             paper = self.paper_repository.get_by_id(paper_id)
-
-            if paper is None:
-                logger.warning("Paper not found for PDF parsing: paper_id=%s", paper_id)
-                raise ValueError(f"Paper with id {paper_id} not found")
-
-            if paper.pdf_object_key is None:
-                logger.warning("Paper has no stored PDF: paper_id=%s", paper_id)
-                raise ValueError(f"Paper with id {paper_id} has no stored PDF")
-
-            safe_arxiv_id = make_arxiv_id_safe(paper.arxiv_id)
-
-            self.paper_repository.mark_parse_started(paper)
-            self.session.commit()
-            parsing_started = True
 
             logger.info(
                 "Parsing stored paper PDF: paper_id=%s arxiv_id=%s",
@@ -67,30 +80,50 @@ class PaperParsingService:
                 paper.arxiv_id,
             )
 
+            if paper is None:
+                logger.warning("Paper not found for PDF parsing: paper_id=%s", paper_id)
+                raise ParserPaperNotFoundError(f"Paper with id {paper_id} not found")
+
+            if paper.pdf_object_key is None:
+                logger.warning("Paper has no stored PDF: paper_id=%s", paper_id)
+                raise ParserPdfNotStoredError(
+                    f"Paper with id {paper_id} has no stored PDF"
+                )
+
+            safe_arxiv_id = make_arxiv_id_safe(paper.arxiv_id)
+
+            self.paper_repository.mark_parse_started(paper)
+            self.session.commit()
+            parsing_started = True
+
             with TemporaryDirectory() as temp_dir:
                 local_path = Path(temp_dir) / "original.pdf"
 
-                logger.info(
-                    "Obtaining paper PDF to local: object_key=%s local_path=%s",
-                    paper.pdf_object_key,
-                    local_path,
-                )
-                self.storage.download_file(
-                    object_key=paper.pdf_object_key,
-                    local_path=local_path,
-                )
+                try:
+                    self.storage.download_file(
+                        object_key=paper.pdf_object_key,
+                        local_path=local_path,
+                    )
 
-                logger.info("Parsing PDF from local path: local_path=%s", local_path)
+                except StorageServiceError as error:
+                    raise ParserStorageError(
+                        "Failed to download paper PDF from storage: "
+                        f"{paper.pdf_object_key}"
+                    ) from error
+
                 parsed = self.parser_provider.parse_pdf(local_path)
                 parsed = _sanitize_parsed_document(parsed)
 
                 json_object_key = f"arxiv/{safe_arxiv_id}/parsed/parsed_document.json"
 
-                logger.info(
-                    "Storing parsed text to storage in json format: json_object_key=%s",
-                    json_object_key,
-                )
-                self.storage.upload_json(parsed.model_dump(), json_object_key)
+                try:
+                    self.storage.upload_json(parsed.model_dump(), json_object_key)
+
+                except StorageServiceError as error:
+                    raise ParserStorageError(
+                        "Failed to upload parsed paper JSON to storage: "
+                        f"{json_object_key}"
+                    ) from error
 
             self.paper_repository.mark_parsed(
                 paper=paper,
@@ -99,32 +132,31 @@ class PaperParsingService:
             )
             self.session.commit()
 
-            logger.info(
-                "Finished paper PDF parsing: paper_id=%s object_key=%s parser=%s",
-                paper.id,
-                json_object_key,
-                parsed.parser_name,
-            )
+            return parsed.parser_name
 
-            return {
-                "parsed_json_object_key": json_object_key,
-                "parser_name": parsed.parser_name,
-            }
-
-        except ValueError as error:
+        except ParserServiceError as error:
             if paper is not None and parsing_started:
-                self.paper_repository.mark_parse_failed(paper, str(error))
-                self.session.commit()
+                self._mark_parse_failed(paper, str(error))
 
             raise
 
-        except Exception as error:
-            if paper is not None and parsing_started:
-                self.paper_repository.mark_parse_failed(paper, str(error))
-                self.session.commit()
-
+        except SQLAlchemyError as error:
+            self.session.rollback()
             logger.exception("Failed paper PDF parsing")
-            raise RuntimeError("Failed paper PDF parsing") from error
+            raise ParserPersistenceError(
+                "Failed to persist paper parsing state"
+            ) from error
+
+    def _mark_parse_failed(self, paper: PaperModel, error: str) -> None:
+        try:
+            self.paper_repository.mark_parse_failed(paper, error)
+            self.session.commit()
+
+        except SQLAlchemyError as mark_error:
+            self.session.rollback()
+            raise ParserPersistenceError(
+                "Failed to persist paper parsing failure state"
+            ) from mark_error
 
 
 def _sanitize_parsed_document(parsed: ParsedDocument) -> ParsedDocument:

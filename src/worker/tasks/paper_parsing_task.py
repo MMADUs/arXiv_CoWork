@@ -8,11 +8,15 @@ from celery import Task
 
 from rag.db.model import PaperParserStatus, PaperModel
 from rag.db.repository import PaperRepository
-from rag.service.parser import PaperParsingService
+from rag.service.parser import (
+    PaperParsingService,
+    ParserNonRetryableError,
+    ParserRetryableError,
+)
 
-from worker.celery_app import celery_app, PARSING_ROUTE
+from worker.celery_app import PARSING_ROUTE, celery_app
+from worker.instances import get_db_session, get_db_storage_session
 from worker.queue_schema import IndexingQueue
-from worker.instances import get_db_storage_session, get_db_session
 from worker.tasks.common import (
     RetryableStageError,
     StagePrerequisiteError,
@@ -74,22 +78,19 @@ def paper_parser_task_route(self: Task, payload: dict[str, Any]) -> dict[str, An
     except StagePrerequisiteError:
         raise
 
-    except ValueError as error:
+    except ParserNonRetryableError as error:
         _mark_paper_parse_failed(task_payload.paper_id, str(error))
-        raise error
+        raise
 
-    except Exception as error:
-        retry_error = RetryableStageError(str(error))
-
+    except ParserRetryableError as error:
         retry_or_fail(
             self,
-            retry_error,
+            RetryableStageError(str(error)),
             lambda: _mark_paper_parse_failed(
                 task_payload.paper_id,
-                str(retry_error),
+                str(error),
             ),
         )
-        raise
 
 
 def _mark_paper_parse_failed(paper_id: UUID, error: str) -> None:
