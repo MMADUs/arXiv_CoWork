@@ -9,9 +9,18 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError, BotoCoreError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from rag.config import S3Settings
+from rag.service.storage.exceptions import (
+    StorageBucketError,
+    StorageDeleteError,
+    StorageDownloadError,
+    StorageJsonError,
+    StorageLocalFileNotFoundError,
+    StorageObjectCheckError,
+    StorageUploadError,
+)
 from rag.service.storage.interface import StorageProvider
 
 logger = logging.getLogger(__name__)
@@ -59,10 +68,16 @@ class S3Storage(StorageProvider):
             return
 
         except (ClientError, BotoCoreError) as error:
-            status_code = error.response["ResponseMetadata"]["HTTPStatusCode"]
+            status_code = (
+                error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if isinstance(error, ClientError)
+                else None
+            )
 
             if status_code != 404:
-                raise RuntimeError(f"Failed to access S3 bucket: {error}")
+                raise StorageBucketError(
+                    f"Failed to access S3 bucket: {self.settings.bucket_name}"
+                ) from error
 
         try:
             self.client.create_bucket(Bucket=self.settings.bucket_name)
@@ -72,7 +87,7 @@ class S3Storage(StorageProvider):
                 "Failed to create S3 bucket: bucket_name=%s",
                 self.settings.bucket_name,
             )
-            raise RuntimeError(
+            raise StorageBucketError(
                 f"Failed to create S3 bucket: {self.settings.bucket_name}"
             ) from error
 
@@ -83,7 +98,9 @@ class S3Storage(StorageProvider):
     def upload_file(self, local_path: Path, object_key: str) -> None:
         try:
             if not local_path.exists():
-                raise FileNotFoundError(f"Upload file does not exist: {local_path}")
+                raise StorageLocalFileNotFoundError(
+                    f"Upload file does not exist: {local_path}"
+                )
 
             self.ensure_bucket_exists()
 
@@ -93,13 +110,16 @@ class S3Storage(StorageProvider):
                 Key=object_key,
             )
 
+        except StorageLocalFileNotFoundError:
+            raise
+
         except (ClientError, BotoCoreError, OSError) as error:
             logger.exception(
                 "Failed to upload file object: key=%s local_path=%s",
                 object_key,
                 local_path,
             )
-            raise RuntimeError(
+            raise StorageUploadError(
                 f"Failed to upload file object with key: {object_key} from {local_path}"
             ) from error
 
@@ -119,7 +139,7 @@ class S3Storage(StorageProvider):
                 object_key,
                 local_path,
             )
-            raise RuntimeError(
+            raise StorageDownloadError(
                 f"Failed to download file object with key: {object_key} to {local_path}"
             ) from error
 
@@ -135,7 +155,7 @@ class S3Storage(StorageProvider):
                 "Failed to delete file object: key=%s",
                 object_key,
             )
-            raise RuntimeError(
+            raise StorageDeleteError(
                 f"Failed to delete file object with key: {object_key}"
             ) from error
 
@@ -150,12 +170,21 @@ class S3Storage(StorageProvider):
                 ContentType="application/json",
             )
 
-        except (ClientError, BotoCoreError, TypeError, ValueError) as error:
+        except (TypeError, ValueError) as error:
+            logger.exception(
+                "Failed to serialize JSON object: key=%s",
+                object_key,
+            )
+            raise StorageJsonError(
+                f"Failed to serialize JSON object with key: {object_key}"
+            ) from error
+
+        except (ClientError, BotoCoreError) as error:
             logger.exception(
                 "Failed to upload JSON object: key=%s",
                 object_key,
             )
-            raise RuntimeError(
+            raise StorageUploadError(
                 f"Failed to upload JSON object with key: {object_key}"
             ) from error
 
@@ -169,17 +198,21 @@ class S3Storage(StorageProvider):
             body = response["Body"].read().decode("utf-8")
             return json.loads(body)
 
-        except (
-            ClientError,
-            BotoCoreError,
-            UnicodeDecodeError,
-            JSONDecodeError,
-        ) as error:
+        except (UnicodeDecodeError, JSONDecodeError) as error:
+            logger.exception(
+                "Failed to parse JSON object: key=%s",
+                object_key,
+            )
+            raise StorageJsonError(
+                f"Failed to parse JSON object with key: {object_key}"
+            ) from error
+
+        except (ClientError, BotoCoreError) as error:
             logger.exception(
                 "Failed to download JSON object: key=%s",
                 object_key,
             )
-            raise RuntimeError(
+            raise StorageDownloadError(
                 f"Failed to download JSON object with key: {object_key}"
             ) from error
 
@@ -198,7 +231,14 @@ class S3Storage(StorageProvider):
             if status_code == 404:
                 return False, {}
 
-            raise
+            raise StorageObjectCheckError(
+                f"Failed to check object existence with key: {object_key}"
+            ) from error
+
+        except BotoCoreError as error:
+            raise StorageObjectCheckError(
+                f"Failed to check object existence with key: {object_key}"
+            ) from error
 
         metadata = {
             "content_type": response.get("ContentType"),

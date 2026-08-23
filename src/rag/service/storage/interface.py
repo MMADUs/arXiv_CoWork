@@ -18,11 +18,14 @@ class StorageProvider(ABC):
         inspect bucket if exist, otherwise create new bucket
         """
 
-    # def check_connection(self) -> tuple[bool, str]:
-    #     """
-    #     check client connection and bucket existence
-    #     """
-    #     ...
+    def check_connection(self) -> tuple[bool, str]:
+        """
+        check client connection and bucket existence
+
+        Returns:
+            boolean flag if connection is ok and any successful message
+        """
+        ...
 
     @abstractmethod
     def close(self) -> None:
@@ -42,11 +45,11 @@ class StorageProvider(ABC):
         download object from storage
         """
 
-    # def delete_file(self, object_key: str) -> None:
-    #     """
-    #     delete object from storage
-    #     """
-    #     ...
+    @abstractmethod
+    def delete_file(self, object_key: str) -> None:
+        """
+        delete object from storage
+        """
 
     @abstractmethod
     def upload_json(self, data: dict[str, Any], object_key: str) -> None:
@@ -58,4 +61,7 @@ class StorageProvider(ABC):
     def download_json(self, object_key: str) -> dict[str, Any]:
         """
         download json from storage and load it as dictionary
+
+        Returns:
+            parsed json in form of python dictionary
         """
