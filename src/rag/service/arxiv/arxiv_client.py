@@ -1,10 +1,10 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-import re
 import asyncio
-import time
 import logging
+import re
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from urllib.parse import urlencode
@@ -14,6 +14,11 @@ from dateutil import parser as date_parser
 
 from rag.config import ArxivSettings
 from rag.schema import ArxivQueryParams, ArxivPaperMetadata
+from rag.service.arxiv.exceptions import (
+    ArxivMalformedEntryError,
+    ArxivMetadataFetchError,
+    ArxivMetadataParseError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +28,14 @@ _VERSION_SUFFIX_RE = re.compile(r"v(\d+)$")
 class ArxivClient:
     """
     ArxivClient is an api client to fetch arxiv paper metadata
+    through `fetch_papers()` method.
     """
 
     xml_namespaces: dict = {
         # current xml parsing mostly uses atom namespace, except for doi.
         "atom": "http://www.w3.org/2005/Atom",
         "arxiv": "http://arxiv.org/schemas/atom",
-        # opensearch currently NOT USED, can be removed in the future.
+        # TODO: opensearch currently NOT USED, can be removed in the future.
         "opensearch": "http://a9.com/-/spec/opensearch/1.1/",
     }
 
@@ -51,6 +57,21 @@ class ArxivClient:
     ) -> list[ArxivPaperMetadata]:
         """
         fetch arxiv papers metadata using `ArxivQueryParams`
+
+        Args:
+            query:
+                arxiv query parameter schema that includes validation
+            ignore_version:
+                flag when version in arxiv paper id matters, best to ignore most of the time
+
+        Returns:
+            list of arxiv paper metadata schema
+
+        Raises:
+            ArxivMetadataFetchError: 
+                if arxiv api request fails after retries
+            ArxivMetadataParseError: 
+                if arxiv xml response cannot be parsed
         """
         api_query_url = self._build_url(query, ignore_version)
         xml_text = await self._fetch_metadata(api_query_url)
@@ -59,6 +80,7 @@ class ArxivClient:
     def _build_search_query(self, query: ArxivQueryParams) -> str:
         """
         arXiv api client search query parameter builder
+
         initial field constraint validation is done at the class `ArxivQueryParams` itself
 
         build based on the official docs: https://info.arxiv.org/help/api/user-manual.html
@@ -180,8 +202,9 @@ class ArxivClient:
 
     async def _fetch_metadata(self, url: str) -> str:
         last_error: Exception | None = None
+        attempts = max(1, self.max_retries)
 
-        for attempt in range(self.max_retries):
+        for attempt in range(attempts):
             await self._wait_between_request()
 
             self.last_request_at = time.monotonic()
@@ -205,7 +228,7 @@ class ArxivClient:
                 logger.warning("arXiv request failed: %s", error)
                 await self._wait_before_retry(attempt)
 
-        raise RuntimeError(
+        raise ArxivMetadataFetchError(
             f"Failed to fetch arXiv papers: {last_error}"
         ) from last_error
 
@@ -245,9 +268,10 @@ class ArxivClient:
         """
         try:
             root = ET.fromstring(xml_text)
+
         except ET.ParseError as error:
             logger.exception("Failed to parse arXiv XML response: %s", error)
-            raise ValueError("Invalid arXiv XML response") from error
+            raise ArxivMetadataParseError("Invalid arXiv XML response") from error
 
         entries = root.findall("atom:entry", self.xml_namespaces)
 
@@ -258,11 +282,18 @@ class ArxivClient:
 
         papers: list[ArxivPaperMetadata] = []
 
+        malformed_entries = 0
+
         for entry in entries:
             try:
                 papers.append(self._parse_metadata(entry))
-            except Exception as error:
+
+            except ArxivMalformedEntryError as error:
+                malformed_entries += 1
                 logger.warning("Skipping malformed arXiv entry: %s", error)
+
+        if malformed_entries == len(entries):
+            raise ArxivMetadataParseError("All arXiv entries were malformed")
 
         return papers
 
@@ -296,7 +327,9 @@ class ArxivClient:
     def _required_text(self, element: ET.Element, path: str) -> str:
         value = self._text(element, path)
         if not value:
-            raise ValueError(f"arXiv entry is missing required field: {path}")
+            raise ArxivMalformedEntryError(
+                f"arXiv entry is missing required field: {path}"
+            )
 
         return value
 
@@ -306,7 +339,13 @@ class ArxivClient:
 
     def _required_datetime(self, element: ET.Element, path: str) -> datetime:
         value = self._required_text(element, path)
-        return date_parser.parse(value)
+        try:
+            return date_parser.parse(value)
+        
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ArxivMalformedEntryError(
+                f"arXiv entry has invalid datetime field: {path}"
+            ) from error
 
     def _authors(self, entry: ET.Element) -> list[str]:
         return [

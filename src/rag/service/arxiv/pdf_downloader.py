@@ -1,14 +1,19 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-import logging
 import asyncio
+import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
 
 from rag.config import ArxivSettings
+from rag.service.arxiv.exceptions import (
+    ArxivInvalidDownloadedPdfError,
+    ArxivInvalidPdfUrlError,
+    ArxivPdfDownloadError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +37,19 @@ class PDFDownloader:
         """
         Download arXiv PDF file and write into local output path
 
-        example of a valid arXiv pdf_url: https://arxiv.org/pdf/1706.03762
+        Args:
+            pdf_url:
+                example of a valid arXiv pdf_url: https://arxiv.org/pdf/1706.03762
+            output_path:
+                temporary path before being moved into storage provider
+
+        Raises:
+            ArxivInvalidPdfUrlError: 
+                if arxiv pdf url is invalid
+            ArxivInvalidDownloadedPdfError: 
+                if downloaded pdf is in incorrect format
+            ArxivPdfDownloadError: 
+                if pdf failed to download after retries
         """
         self._validate_pdf_url(pdf_url)
 
@@ -41,7 +58,9 @@ class PDFDownloader:
 
         last_error: Exception | None = None
 
-        for attempt in range(self.max_retries):
+        attempts = max(1, self.max_retries)
+
+        for attempt in range(attempts):
             try:
                 logger.info("Downloading arXiv PDF: attempt=%s", attempt + 1)
 
@@ -49,7 +68,11 @@ class PDFDownloader:
                 self._validate_downloaded_pdf(output_path)
                 return
 
-            except Exception as error:
+            except (
+                httpx.HTTPError,
+                OSError,
+                ArxivInvalidDownloadedPdfError,
+            ) as error:
                 last_error = error
 
                 if output_path.exists():
@@ -57,10 +80,13 @@ class PDFDownloader:
 
                 logger.warning("PDF download failed: %s", error)
 
-                if attempt < self.max_retries - 1:
+                if attempt < attempts - 1:
                     await self._wait_before_retry(attempt)
 
-        raise RuntimeError(
+        if isinstance(last_error, ArxivInvalidDownloadedPdfError):
+            raise last_error
+
+        raise ArxivPdfDownloadError(
             f"Failed to download arXiv PDF paper: {last_error}"
         ) from last_error
 
@@ -99,20 +125,23 @@ class PDFDownloader:
             await self.client.aclose()
 
     def _validate_pdf_url(self, pdf_url: str) -> None:
+        if not isinstance(pdf_url, str):
+            raise ArxivInvalidPdfUrlError("PDF url must be a string")
+
         parsed = urlparse(pdf_url)
 
         if parsed.scheme not in {"http", "https"}:
-            raise ValueError("PDF url must use http or https")
+            raise ArxivInvalidPdfUrlError("PDF url must use http or https")
 
         if not parsed.netloc:
-            raise ValueError("PDF url must include a host")
+            raise ArxivInvalidPdfUrlError("PDF url must include a host")
 
     def _validate_downloaded_pdf(self, output_path: Path) -> None:
         if not output_path.exists() or output_path.stat().st_size == 0:
-            raise ValueError("Downloaded PDF is empty")
+            raise ArxivInvalidDownloadedPdfError("Downloaded PDF is empty")
 
         with output_path.open("rb") as file:
             header = file.read(5)
 
         if header != b"%PDF-":
-            raise ValueError("Downloaded file is not a valid PDF")
+            raise ArxivInvalidDownloadedPdfError("Downloaded file is not a valid PDF")

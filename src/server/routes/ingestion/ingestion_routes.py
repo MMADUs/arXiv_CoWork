@@ -6,7 +6,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from rag.service.arxiv import ArxivClient, ArxivIngestionService
+from rag.service.arxiv import (
+    ArxivClient,
+    ArxivIngestionService,
+    ArxivNonRetryableError,
+    ArxivRetryableError,
+    ArxivServiceError,
+)
 from server.dependencies import get_arxiv_client, get_db_session
 from server.routes.ingestion.ingestion_helpers import (
     enqueue_pdf_download_by_id,
@@ -51,9 +57,21 @@ async def ingest_paper_route(
     try:
         ingestion_result = await ingestion_service.ingest_metadata(query_params)
 
-    except RuntimeError as error:
+    except ArxivNonRetryableError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    except ArxivRetryableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
+
+    except ArxivServiceError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(error),
         ) from error
 

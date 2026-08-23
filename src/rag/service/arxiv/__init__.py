@@ -7,6 +7,20 @@ from rag.service.arxiv.arxiv_ingestion_service import (
     ArxivIngestionResult,
     IngestedPaperResult,
 )
+from rag.service.arxiv.exceptions import (
+    ArxivInvalidDownloadedPdfError,
+    ArxivInvalidPdfUrlError,
+    ArxivMalformedEntryError,
+    ArxivMetadataFetchError,
+    ArxivMetadataParseError,
+    ArxivNonRetryableError,
+    ArxivPaperNotFoundError,
+    ArxivPdfDownloadError,
+    ArxivPersistenceError,
+    ArxivRetryableError,
+    ArxivServiceError,
+    ArxivStorageError,
+)
 
 from rag.service.arxiv.paper_download_service import PaperDownloadService
 
@@ -17,6 +31,18 @@ __all__ = [
     "ArxivIngestionService",
     "ArxivIngestionResult",
     "IngestedPaperResult",
+    "ArxivInvalidDownloadedPdfError",
+    "ArxivInvalidPdfUrlError",
+    "ArxivMalformedEntryError",
+    "ArxivMetadataFetchError",
+    "ArxivMetadataParseError",
+    "ArxivNonRetryableError",
+    "ArxivPaperNotFoundError",
+    "ArxivPdfDownloadError",
+    "ArxivPersistenceError",
+    "ArxivRetryableError",
+    "ArxivServiceError",
+    "ArxivStorageError",
     "PaperDownloadService",
     "make_arxiv_id_safe",
 ]
