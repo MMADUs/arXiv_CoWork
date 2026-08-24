@@ -1,11 +1,12 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-from uuid import UUID
-from typing import Any
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
+from uuid import UUID
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from rag.db.model import (
@@ -17,15 +18,25 @@ from rag.db.model import (
 )
 from rag.db.repository import ChunkRepository, PaperRepository
 from rag.service.embedding import (
-    EmbeddingProvider,
     ChunkEmbeddingService,
     ChunkEmbeddingResult,
+    EmbeddingProvider,
+    EmbeddingServiceError,
 )
 from rag.service.elasticsearch.config import ElasticsearchClient
+from rag.service.elasticsearch.es_exceptions import (
+    ElasticsearchPaperNotFoundError,
+    ElasticsearchPersistenceError,
+    ElasticsearchServiceError,
+)
 
 
 @dataclass(slots=True)
 class EligibleChunk:
+    """
+    Holds the eligible chunk for indexing
+    """
+
     chunk: ChunkModel
     paper: PaperModel
 
@@ -36,6 +47,23 @@ class EligibleChunk:
 
 @dataclass(slots=True)
 class ChunkIndexingResult:
+    """
+    Response schema after the chunks are processed for indexing
+    """
+
+    embedding_model_name: str
+    requested_chunks: int
+    indexed_chunks: int
+    failed_chunks: int
+    errors: dict[UUID, str]
+
+
+@dataclass(slots=True)
+class PaperReindexResult:
+    """
+    Response schema after chunks are processed for reindex (update)
+    """
+
     embedding_model_name: str
     requested_chunks: int
     indexed_chunks: int
@@ -44,6 +72,11 @@ class ChunkIndexingResult:
 
 
 class ChunkIndexingService:
+    """
+    `ChunkIndexingService` embeds paper chunks and indexes them into Elasticsearch,
+    through `index_pending_chunks()` and `reindex_paper()` methods.
+    """
+
     def __init__(
         self,
         session: Session,
@@ -61,159 +94,160 @@ class ChunkIndexingService:
         self.embedding_model_name = embedding_provider.model_name
         self.elasticsearch_client = elasticsearch_client
 
-    async def index_pending_chunks(
+    async def index_chunks_by_paper_id(
         self,
         paper_id: UUID,
         limit: int = 50,
         include_failed: bool = False,
     ) -> ChunkIndexingResult:
         """
-        inserting/indexing pending chunks from database to search db
+        Insert/index pending chunks from database to search db.
+
+        Returns:
+            chunk indexing summary for the requested paper
+
+        Raises:
+            ElasticsearchPaperNotFoundError:
+                if paper does not exist locally
+            ElasticsearchIndexError:
+                if Elasticsearch index setup fails
+            ElasticsearchBulkIndexError:
+                if Elasticsearch bulk indexing fails before per-chunk errors
+                can be recorded
+            ElasticsearchPersistenceError:
+                if local indexing state persistence fails
         """
-        paper = self.paper_repository.get_by_id(paper_id)
+        try:
+            paper = self.paper_repository.get_by_id(paper_id)
 
-        if paper is None:
-            return ChunkIndexingResult(
-                embedding_model_name=self.embedding_model_name,
-                requested_chunks=0,
-                indexed_chunks=0,
-                failed_chunks=0,
-                errors={},
+            if paper is None:
+                raise ElasticsearchPaperNotFoundError(f"Paper not found: {paper_id}")
+
+            if paper.chunking_status != PaperChunkingStatus.CHUNKED:
+                return ChunkIndexingResult(
+                    embedding_model_name=self.embedding_model_name,
+                    requested_chunks=0,
+                    indexed_chunks=0,
+                    failed_chunks=0,
+                    errors={},
+                )
+
+            self.elasticsearch_client.ensure_chunk_index()
+
+            chunks = self.chunk_repository.list_pending_indexing(
+                paper_id=paper_id,
+                limit=limit,
+                include_failed=include_failed,
             )
 
-        if paper.chunking_status != PaperChunkingStatus.CHUNKED:
-            return ChunkIndexingResult(
-                embedding_model_name=self.embedding_model_name,
-                requested_chunks=0,
-                indexed_chunks=0,
-                failed_chunks=0,
-                errors={},
-            )
+            # if no chunk found, nothing to index
+            if not chunks:
+                self._sync_paper_indexing_status(paper)
+                self.session.commit()
 
-        self.elasticsearch_client.ensure_chunk_index()
+                return ChunkIndexingResult(
+                    embedding_model_name=self.embedding_model_name,
+                    requested_chunks=0,
+                    indexed_chunks=0,
+                    failed_chunks=0,
+                    errors={},
+                )
 
-        chunks = self.chunk_repository.list_pending_indexing(
-            paper_id=paper_id,
-            limit=limit,
-            include_failed=include_failed,
-        )
+            self.paper_repository.mark_indexing_started(paper)
 
-        # if no chunk found, nothing to index
-        if not chunks:
-            self._finalize_paper_indexing_status(paper_id)
+            eligible_chunks = [
+                EligibleChunk(chunk=chunk, paper=paper) for chunk in chunks
+            ]
+
+            # perform indexing to all eligible chunks
+            result = await self._index_chunks(eligible_chunks)
+
+            self._sync_paper_indexing_status(paper)
             self.session.commit()
 
-            return ChunkIndexingResult(
-                embedding_model_name=self.embedding_model_name,
-                requested_chunks=0,
-                indexed_chunks=0,
-                failed_chunks=0,
-                errors={},
-            )
+            return result
 
-        eligible_chunks: list[EligibleChunk] = []
+        except ElasticsearchServiceError:
+            self.session.rollback()
+            raise
 
-        failed_count = 0
-        errors_by_chunk_id: dict[UUID, str] = {}
+        except SQLAlchemyError as error:
+            self.session.rollback()
+            raise ElasticsearchPersistenceError(
+                "Failed to persist paper indexing state"
+            ) from error
 
-        # buffer cache for paper
-        # we need this to minimize querying the same paper row
-        # when the loop of chunks below querying the same paper, lookup to buffer instead
-        paper_cache: dict[UUID, PaperModel] = {}
+    async def reindex_paper_by_id(self, paper_id: UUID) -> PaperReindexResult:
+        """
+        Rebuild Elasticsearch documents for every chunk owned by one paper.
 
-        for chunk in chunks:
-            # lookup existing paper
-            paper = paper_cache.get(chunk.paper_id)
+        Returns:
+            paper reindexing summary
 
-            # append if none
+        Raises:
+            ElasticsearchPaperNotFoundError:
+                if paper does not exist locally
+            ElasticsearchIndexError:
+                if Elasticsearch index setup fails
+            ElasticsearchDeleteError:
+                if deleting old indexed chunks fails
+            ElasticsearchBulkIndexError:
+                if Elasticsearch bulk indexing fails before per-chunk errors
+                can be recorded
+            ElasticsearchPersistenceError:
+                if local indexing state persistence fails
+        """
+        try:
+            paper = self.paper_repository.get_by_id(paper_id)
+
             if paper is None:
-                paper = self.paper_repository.get_by_id(chunk.paper_id)
-                paper_cache[chunk.paper_id] = paper
+                raise ElasticsearchPaperNotFoundError(f"Paper not found: {paper_id}")
 
-            # check again if from db is still none
-            # if paper does not exist, means the chunk does not belong to any existing paper
-            if paper is None:
-                failed_count += 1
+            self.elasticsearch_client.ensure_chunk_index()
 
-                error_message = f"the chunk id: {chunk.id} does not belong to a paper with id {chunk.paper_id}"
-                errors_by_chunk_id[chunk.id] = error_message
+            # delete chunks by paper in elasticsearch, as well as reset its status
+            # on database
+            self.elasticsearch_client.delete_chunks_by_paper(str(paper.id))
+            chunks = self.chunk_repository.reset_indexing_by_paper(paper.id)
 
-                self.chunk_repository.mark_indexing_failed(chunk, error_message)
-                continue
+            eligible_chunks = [
+                EligibleChunk(chunk=chunk, paper=paper) for chunk in chunks
+            ]
 
-            # append eligible chunk
-            eligible_chunks.append(
-                EligibleChunk(
-                    chunk=chunk,
-                    paper=paper,
+            # start reindexing
+            self.paper_repository.mark_indexing_started(paper)
+
+            result = await self._index_chunks(eligible_chunks)
+
+            if not chunks:
+                self.paper_repository.mark_chunking_skipped(paper)
+            elif result.failed_chunks:
+                self.paper_repository.mark_indexing_failed(
+                    paper,
+                    f"{result.failed_chunks} chunk(s) failed embedding or indexing",
                 )
+            else:
+                self.paper_repository.mark_indexed(paper)
+
+            self.session.commit()
+
+            return PaperReindexResult(
+                embedding_model_name=result.embedding_model_name,
+                requested_chunks=result.requested_chunks,
+                indexed_chunks=result.indexed_chunks,
+                failed_chunks=result.failed_chunks,
+                errors=result.errors,
             )
 
-        # perform indexing to all eligible chunks
-        result = await self._index_chunks(eligible_chunks)
+        except ElasticsearchServiceError:
+            self.session.rollback()
+            raise
 
-        result.failed_chunks += failed_count
-        result.errors.update(errors_by_chunk_id)
-
-        self._finalize_paper_indexing_status(paper_id)
-        self.session.commit()
-
-        return result
-
-    async def reindex_paper(self, paper_id: UUID) -> dict[str, Any]:
-        paper = self.paper_repository.get_by_id(paper_id)
-
-        if paper is None:
-            return {
-                "paper_found": False,
-                "paper_id": str(paper_id),
-                "arxiv_id": None,
-                "embedding_model": self.embedding_model_name,
-                "chunks_requested": 0,
-                "chunks_indexed": 0,
-                "chunks_failed": 0,
-                "elasticsearch_documents_deleted": 0,
-                "errors": [f"paper {paper_id} was not found"],
-            }
-
-        self.elasticsearch_client.ensure_chunk_index()
-
-        # delete chunks by paper in elasticsearch, as well as reset its status on database
-        delete_result = self.elasticsearch_client.delete_chunks_by_paper(str(paper.id))
-        chunks = self.chunk_repository.reset_indexing_by_paper(paper.id)
-
-        eligible_chunks = [EligibleChunk(chunk=chunk, paper=paper) for chunk in chunks]
-
-        # start reindexing
-        self.paper_repository.mark_indexing_started(paper)
-
-        result = await self._index_chunks(eligible_chunks)
-
-        response: dict[str, Any] = {
-            "paper_found": True,
-            "paper_id": str(paper.id),
-            "arxiv_id": paper.arxiv_id,
-            "embedding_model": result.embedding_model_name,
-            "chunks_requested": result.requested_chunks,
-            "chunks_indexed": result.indexed_chunks,
-            "chunks_failed": result.failed_chunks,
-            "elasticsearch_documents_deleted": delete_result.deleted,
-            "errors": result.errors,
-        }
-
-        if not chunks:
-            self.paper_repository.mark_chunking_skipped(paper)
-        elif result.failed_chunks:
-            self.paper_repository.mark_indexing_failed(
-                paper,
-                f"{result.failed_chunks} chunk(s) failed embedding or indexing",
-            )
-        else:
-            self.paper_repository.mark_indexed(paper)
-
-        self.session.commit()
-
-        return response
+        except SQLAlchemyError as error:
+            self.session.rollback()
+            raise ElasticsearchPersistenceError(
+                "Failed to persist paper reindexing state"
+            ) from error
 
     async def _index_chunks(
         self,
@@ -222,11 +256,9 @@ class ChunkIndexingService:
         """
         core chunk indexing operation
 
-        embeds the exact chunks it was given via `ChunkEmbeddingService.embed_chunks()`
-        rather than re-querying "pending embedding" chunks — `embedding_status` and
-        `indexing_status` are independent columns, so a chunk can already be
-        `EMBEDDED` while still `PENDING` indexing. re-querying would silently drop
-        those chunks.
+        Do not re-query chunks by embedding_status here. A chunk can already be
+        EMBEDDED while its indexing_status is still PENDING, so querying only for
+        pending embeddings would skip chunks that are ready to index.
         """
         documents: list[dict[str, Any]] = []  # documents to be inserted
         embedded_chunks: dict[str, ChunkModel] = {}  # successful embedded chunks buffer
@@ -237,9 +269,29 @@ class ChunkIndexingService:
         chunks = [eligible.chunk for eligible in eligible_chunks]
 
         # embed exactly the chunks we were handed, no re-query
-        embedding_result: ChunkEmbeddingResult = (
-            await self.chunk_embedding_service.embed_chunks(chunks)
-        )
+        try:
+            embedding_result: ChunkEmbeddingResult = (
+                await self.chunk_embedding_service.embed_chunks(chunks)
+            )
+
+        except EmbeddingServiceError as error:
+            for chunk in chunks:
+                error_message = (
+                    f"chunk {chunk.id} failed during embedding before indexing: "
+                    f"{error}"
+                )
+                errors_by_chunk_id[chunk.id] = error_message
+
+                self.chunk_repository.mark_embedding_failed(chunk, str(error))
+                self.chunk_repository.mark_indexing_failed(chunk, error_message)
+
+            return ChunkIndexingResult(
+                embedding_model_name=self.embedding_model_name,
+                requested_chunks=len(chunks),
+                indexed_chunks=0,
+                failed_chunks=len(chunks),
+                errors=errors_by_chunk_id,
+            )
 
         # embedding lookup by chunk id
         embeddings_by_chunk_id = embedding_result.embeddings_by_chunk_id
@@ -257,6 +309,17 @@ class ChunkIndexingService:
             # this would easily skipped the chunk that is marked as missing embeddings
             # the flow is very vague, but this is the simplest way
             if embedding is None:
+                error_message = errors_by_chunk_id.get(
+                    chunk.id,
+                    f"chunk {chunk.id} was not indexed because embedding is missing",
+                )
+                errors_by_chunk_id[chunk.id] = error_message
+
+                if chunk.id not in embedding_result.errors:
+                    failed_count += 1
+                    self.chunk_repository.mark_embedding_failed(chunk, error_message)
+
+                self.chunk_repository.mark_indexing_failed(chunk, error_message)
                 continue
 
             # build chunk document schema from `PaperModel` and `ChunkModel`
@@ -301,7 +364,8 @@ class ChunkIndexingService:
                 embedding_model_name=self.embedding_model_name,
                 requested_chunks=len(chunks),
                 indexed_chunks=0,
-                # failed to embed + failed to bulk insert = a total of chunk processed in this function
+                # failed to embed + failed to bulk insert =
+                # a total of chunk processed in this function
                 failed_chunks=failed_count + len(embedded_chunks),
                 errors=errors_by_chunk_id,
             )
@@ -342,13 +406,8 @@ class ChunkIndexingService:
             errors=errors_by_chunk_id,
         )
 
-    def _finalize_paper_indexing_status(self, paper_id: UUID) -> None:
-        paper = self.paper_repository.get_by_id(paper_id)
-
-        if paper is None:
-            return
-
-        chunks = self.chunk_repository.list_by_paper_id(paper_id)
+    def _sync_paper_indexing_status(self, paper: PaperModel) -> None:
+        chunks = self.chunk_repository.list_by_paper_id(paper.id)
 
         if not chunks:
             self.paper_repository.mark_chunking_skipped(paper)
@@ -385,7 +444,8 @@ class ChunkIndexingService:
         """
         map `ChunkModel` and `PaperModel` into elasticsearch mapping properties
 
-        the keys must have matched the retured properties by `create_chunk_index_mapping()` function
+        the keys must have matched the retured properties by
+        `create_chunk_index_mapping()` function
         """
 
         return {

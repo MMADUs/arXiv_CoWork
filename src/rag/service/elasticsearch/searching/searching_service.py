@@ -5,9 +5,16 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
-from rag.service.elasticsearch.config import ElasticsearchClient, SearchHit, SearchResult
+from rag.service.embedding import (
+    EmbeddingProvider,
+    QueryEmbeddingService,
+)
+from rag.service.elasticsearch.config import (
+    ElasticsearchClient,
+    SearchHit,
+    SearchResult,
+)
 from rag.service.elasticsearch.searching.query_builder import ElasticsearchQueryBuilder
-from rag.service.embedding import QueryEmbeddingService, EmbeddingProvider
 
 
 @dataclass(slots=True)
@@ -60,6 +67,62 @@ class SearchingService:
         fuzziness: str | None = None,
         include_highlights: bool = True,
     ) -> SearchingServiceResult:
+        """
+        Search indexed paper chunks using BM25, vector, or hybrid retrieval.
+
+        Args:
+            query:
+                User input text query for search.
+            mode:
+                Search mode to use: "bm25", "vector", or "hybrid".
+            size:
+                The size of returned matching documents. This is the top-K result count,
+                and is also used with offset for pagination.
+            offset:
+                How many results to skip before returning results. Mainly useful for
+                pagination query. For normal RAG retrieval, use 0.
+            candidate_pool_size:
+                Number of nearest vector matches to keep before pagination. Defaults to
+                size + offset. Must be at least size + offset. Used by vector and hybrid.
+            num_candidates:
+                Number of candidate vectors Elasticsearch should inspect during approximate
+                KNN search. Higher values can improve recall but make search slower. Used
+                by vector and hybrid.
+            categories:
+                Search by selected list of categories.
+            paper_id:
+                Search documents by paper id.
+            published_from:
+                Filter search starting date of paper publish date.
+            published_to:
+                Filter latest date of paper publish date.
+            latest_first:
+                Sort flag to make returned BM25 documents ordered by latest publish date
+                first. Score order still applies after date as the primary sort factor.
+            min_score:
+                Optional minimum relevance score required for returned documents. Leave as
+                None to disable score filtering.
+            track_total_hits:
+                Whether Elasticsearch should compute the exact total number of matching
+                documents. Useful for pagination, but can be slower on large indexes.
+            fuzziness:
+                Typo-tolerance setting for the BM25 multi_match query, such as "AUTO".
+                Leave as None for normal BM25 matching.
+            include_highlights:
+                Include similarity highlights inside searched documents.
+
+        Raises:
+            EmbeddingValidationError:
+                if vector or hybrid search receives an empty query
+            EmbeddingProviderError:
+                if query embedding provider request fails
+            EmbeddingResponseError:
+                if query embedding provider response is malformed or invalid
+            ElasticsearchSearchError:
+                if Elasticsearch search request fails
+            ElasticsearchResponseError:
+                if Elasticsearch search response is malformed or invalid
+        """
         # main query builder
         query_builder = ElasticsearchQueryBuilder(
             categories=categories,
@@ -103,7 +166,7 @@ class SearchingService:
 
             response = self.elasticsearch_client.search(body=vector_query)
 
-        # Hybrid RRF (BM25 + VECTOR), fused locally to avoid licensed ES RRF.
+        # Hybrid RRF (BM25 + VECTOR), fused locally to avoid licensed ES RRF
         elif mode == "hybrid":
             if query_vector is None:
                 raise RuntimeError("query vector was not generated")
@@ -136,7 +199,7 @@ class SearchingService:
                 bm25_hits=bm25_response.hits,
                 vector_hits=vector_response.hits,
             )
-            
+
             response = SearchResult(
                 total=len(fused_hits),
                 hits=fused_hits[offset : offset + size],

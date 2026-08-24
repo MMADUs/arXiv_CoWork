@@ -13,7 +13,23 @@ from rag.service.elasticsearch.config import (
     SearchResult,
     create_elasticsearch_client,
 )
-from rag.service.elasticsearch.indexing import ChunkIndexingService, ChunkIndexingResult
+from rag.service.elasticsearch.es_exceptions import (
+    ElasticsearchBulkIndexError,
+    ElasticsearchDeleteError,
+    ElasticsearchIndexError,
+    ElasticsearchNonRetryableError,
+    ElasticsearchPaperNotFoundError,
+    ElasticsearchPersistenceError,
+    ElasticsearchResponseError,
+    ElasticsearchRetryableError,
+    ElasticsearchSearchError,
+    ElasticsearchServiceError,
+)
+from rag.service.elasticsearch.indexing import (
+    ChunkIndexingService,
+    ChunkIndexingResult,
+    PaperReindexResult,
+)
 from rag.service.elasticsearch.searching import SearchingService, SearchingServiceResult
 
 __all__ = [
@@ -29,6 +45,17 @@ __all__ = [
     "create_elasticsearch_client",
     "ChunkIndexingService",
     "ChunkIndexingResult",
+    "PaperReindexResult",
     "SearchingService",
     "SearchingServiceResult",
+    "ElasticsearchServiceError",
+    "ElasticsearchRetryableError",
+    "ElasticsearchNonRetryableError",
+    "ElasticsearchIndexError",
+    "ElasticsearchSearchError",
+    "ElasticsearchBulkIndexError",
+    "ElasticsearchDeleteError",
+    "ElasticsearchPersistenceError",
+    "ElasticsearchPaperNotFoundError",
+    "ElasticsearchResponseError",
 ]

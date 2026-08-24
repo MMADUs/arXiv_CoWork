@@ -1,7 +1,7 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-from rag.service.elasticsearch.config.client import (
+from rag.service.elasticsearch.config.es_client import (
     BulkIndexResult,
     DeleteChunksByPaperResult,
     DeleteIndexResult,
@@ -12,7 +12,7 @@ from rag.service.elasticsearch.config.client import (
     SearchHit,
     SearchResult,
 )
-from rag.service.elasticsearch.config.factory import create_elasticsearch_client
+from rag.service.elasticsearch.config.es_factory import create_elasticsearch_client
 
 __all__ = [
     "ElasticsearchClient",

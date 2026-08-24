@@ -4,6 +4,7 @@
 from rag.service.elasticsearch.indexing.chunk_indexing_service import (
     ChunkIndexingService,
     ChunkIndexingResult,
+    PaperReindexResult,
 )
 
-__all__ = ["ChunkIndexingService", "ChunkIndexingResult"]
+__all__ = ["ChunkIndexingService", "ChunkIndexingResult", "PaperReindexResult"]

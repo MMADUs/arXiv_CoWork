@@ -10,6 +10,20 @@ class ElasticsearchQueryBuilder:
     `ElasticsearchQueryBuilder` is responsible to construct the elasticsearch query
 
     since the query is pretty complicated, its best to make its own class
+
+    Args:
+        categories:
+            search by selected list of categories
+        paper_id:
+            search documents by paper id
+        published_from:
+            filter search starting date of paper publish date
+        published_to:
+            filter latest date of paper publish date
+        track_total_hits:
+            whether Elasticsearch should compute the exact total number of matching documents
+        min_score:
+            any searched document score that is below the min_score threshold will be filtered out
     """
 
     def __init__(
@@ -27,7 +41,7 @@ class ElasticsearchQueryBuilder:
             and published_from > published_to
         ):
             raise ValueError("published_from must be before or equal to published_to")
-        
+
         self.categories = categories
         self.paper_id = paper_id
         self.published_from = published_from
@@ -46,6 +60,25 @@ class ElasticsearchQueryBuilder:
         fuzziness: str | None = None,
         include_highlights: bool = True,
     ) -> dict[str, Any]:
+        """
+        Build BM25 search request body query
+
+        Args:
+            query:
+                user input text query for search
+            size:
+                the size of returned matching documents (refer to top-K matching)
+            offset:
+                how many results to skip before returning results (useful for pagination query)
+            latest_first:
+                filter flag to makes returned document in latest first order by publish date,
+                so score order still aplies afterwards when the date being the primary sort factor
+            fuzziness:
+                typo-tolerance setting for the multi_match query, such as "AUTO".
+                Leave as None for normal BM25 matching (maybe make it literal ???)
+            include_highlights:
+                include similarity highlights inside searched documents
+        """
         request_body = self._base_body(size=size, offset=offset)
 
         request_body["query"] = {
@@ -86,6 +119,23 @@ class ElasticsearchQueryBuilder:
         candidate_pool_size: int | None = None,
         num_candidates: int | None = None,
     ) -> dict[str, Any]:
+        """
+        Build vector/KNN search request body
+
+        Args:
+            query_vector:
+                embedding vector for the search query
+            size:
+                the size of returned matching documents (useful for pagination query)
+            offset:
+                how many results to skip before returning results (useful for pagination query)
+            candidate_pool_size:
+                number of nearest vector matches to keep before pagination, defaults to
+                size + offset (must be at least size + offset)
+            num_candidates:
+                number of candidate vectors elasticsearch should inspect during approximate
+                KNN search, higher values can improve recall but make search slower
+        """
         if not query_vector:
             raise ValueError("query_vector must not be empty")
 
