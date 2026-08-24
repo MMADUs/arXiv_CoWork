@@ -18,22 +18,31 @@ class EmbeddingProvider(ABC):
     async def check_connection(self) -> tuple[bool, str]:
         """
         check ollama connection and model existence
+
+        Returns:
+            boolean flag if connection is ok and any successful message
         """
 
     @abstractmethod
     async def embed_query(self, text: str) -> list[float]:
         """
         embed one search query
+
+        Returns:
+            1D matrix (vector) with a scalar type of `float`
         """
 
     @abstractmethod
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """
         embed document chunks for indexing
+
+        Returns:
+            list of 1D matrix (vector) with a scalar type of `float`
         """
 
     @abstractmethod
-    async def close(self) -> tuple[bool, str]:
+    async def close(self) -> None:
         """
         close ollama http client connection
         """

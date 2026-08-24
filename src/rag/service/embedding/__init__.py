@@ -11,6 +11,15 @@ from rag.service.embedding.embed_chunk import (
     EmbedChunkResult,
 )
 from rag.service.embedding.embed_query import QueryEmbeddingService
+from rag.service.embedding.embedding_exceptions import (
+    EmbeddingNonRetryableError,
+    EmbeddingPersistenceError,
+    EmbeddingProviderError,
+    EmbeddingResponseError,
+    EmbeddingRetryableError,
+    EmbeddingServiceError,
+    EmbeddingValidationError,
+)
 
 __all__ = [
     "EmbeddingProvider",
@@ -19,4 +28,11 @@ __all__ = [
     "ChunkEmbeddingResult",
     "EmbedChunkResult",
     "QueryEmbeddingService",
+    "EmbeddingServiceError",
+    "EmbeddingRetryableError",
+    "EmbeddingNonRetryableError",
+    "EmbeddingProviderError",
+    "EmbeddingPersistenceError",
+    "EmbeddingValidationError",
+    "EmbeddingResponseError",
 ]
