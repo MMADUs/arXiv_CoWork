@@ -12,7 +12,7 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from rag.config import S3Settings
-from rag.service.storage.exceptions import (
+from rag.service.storage.storage_exceptions import (
     StorageBucketError,
     StorageDeleteError,
     StorageDownloadError,
@@ -21,7 +21,7 @@ from rag.service.storage.exceptions import (
     StorageObjectCheckError,
     StorageUploadError,
 )
-from rag.service.storage.interface import StorageProvider
+from rag.service.storage.storage_interface import StorageProvider
 
 logger = logging.getLogger(__name__)
 

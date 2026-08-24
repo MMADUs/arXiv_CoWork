@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from rag.config import get_settings
 from rag.db.repository import ChunkRepository, PaperRepository
 from rag.schema.document_schema import ParsedDocument
-from rag.service.chunker.exceptions import (
+from rag.service.chunker.chunker_exceptions import (
     ChunkerExecutionError,
     ChunkerPaperNotFoundError,
     ChunkerParsedDocumentNotFoundError,

@@ -14,7 +14,7 @@ from rag.db.model import PaperModel
 from rag.db.repository import PaperRepository
 from rag.schema.document_schema import ParsedDocument, ParsedSection
 from rag.service.arxiv import make_arxiv_id_safe
-from rag.service.parser.exceptions import (
+from rag.service.parser.parser_exceptions import (
     ParserPaperNotFoundError,
     ParserPdfNotStoredError,
     ParserPersistenceError,

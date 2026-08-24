@@ -13,7 +13,7 @@ from rag.config import get_settings
 from rag.db.repository import PaperRepository
 from rag.schema.arxiv_schema import ArxivQueryParams
 from rag.service.arxiv.arxiv_client import ArxivClient
-from rag.service.arxiv.exceptions import ArxivPersistenceError, ArxivServiceError
+from rag.service.arxiv.arxiv_exceptions import ArxivPersistenceError, ArxivServiceError
 
 logger = logging.getLogger(__name__)
 

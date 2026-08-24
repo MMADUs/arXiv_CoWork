@@ -1,7 +1,7 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-from rag.service.parser.exceptions import (
+from rag.service.parser.parser_exceptions import (
     ParserExecutionError,
     ParserNonRetryableError,
     ParserPaperNotFoundError,
@@ -12,7 +12,7 @@ from rag.service.parser.exceptions import (
     ParserServiceError,
     ParserStorageError,
 )
-from rag.service.parser.interface import ParserStrategy
+from rag.service.parser.parser_interface import ParserStrategy
 from rag.service.parser.paper_parsing_service import PaperParsingService
 from rag.service.parser.parser_provider import ParserProvider
 

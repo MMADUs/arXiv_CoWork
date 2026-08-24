@@ -1,7 +1,7 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-from rag.service.storage.exceptions import (
+from rag.service.storage.storage_exceptions import (
     StorageBucketError,
     StorageDeleteError,
     StorageDownloadError,
@@ -13,8 +13,8 @@ from rag.service.storage.exceptions import (
     StorageServiceError,
     StorageUploadError,
 )
-from rag.service.storage.factory import create_s3_storage
-from rag.service.storage.interface import StorageProvider
+from rag.service.storage.storage_factory import create_s3_storage
+from rag.service.storage.storage_interface import StorageProvider
 
 __all__ = [
     "StorageProvider",

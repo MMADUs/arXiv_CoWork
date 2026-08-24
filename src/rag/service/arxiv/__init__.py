@@ -7,7 +7,7 @@ from rag.service.arxiv.arxiv_ingestion_service import (
     ArxivIngestionResult,
     IngestedPaperResult,
 )
-from rag.service.arxiv.exceptions import (
+from rag.service.arxiv.arxiv_exceptions import (
     ArxivInvalidDownloadedPdfError,
     ArxivInvalidPdfUrlError,
     ArxivMalformedEntryError,

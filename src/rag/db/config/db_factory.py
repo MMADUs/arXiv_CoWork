@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from rag.config import Settings, get_settings
-from rag.db.config.interface import DatabaseProvider
+from rag.db.config.db_interface import DatabaseProvider
 from rag.db.config.postgresql import PostgreSQLDatabase
 
 

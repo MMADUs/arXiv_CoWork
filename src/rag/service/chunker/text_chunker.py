@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from rag.config import ChunkerSettings
 from rag.schema.document_schema import ParsedDocument, ParsedSection
 from rag.schema.chunk_schema import ChunkCandidate
-from rag.service.chunker.exceptions import ChunkerConfigurationError
+from rag.service.chunker.chunker_exceptions import ChunkerConfigurationError
 
 
 @dataclass(slots=True)

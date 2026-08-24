@@ -9,12 +9,12 @@ import fitz
 from rag.config import ParserSettings
 from rag.schema.document_schema import ParsedDocument
 from rag.service.parser.docling_parser import DoclingParser
-from rag.service.parser.exceptions import (
+from rag.service.parser.parser_exceptions import (
     ParserExecutionError,
     ParserPdfValidationError,
     ParserServiceError,
 )
-from rag.service.parser.interface import ParserStrategy
+from rag.service.parser.parser_interface import ParserStrategy
 from rag.service.parser.pymupdf_parser import PyMuPDFParser
 
 logger = logging.getLogger(__name__)

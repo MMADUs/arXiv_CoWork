@@ -10,7 +10,7 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import DocItemLabel
 
 from rag.config import ParserSettings
-from rag.service.parser.interface import ParserStrategy
+from rag.service.parser.parser_interface import ParserStrategy
 from rag.schema.document_schema import ParsedDocument, ParsedSection
 
 

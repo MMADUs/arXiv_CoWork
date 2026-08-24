@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import httpx
 
 from rag.config import ArxivSettings
-from rag.service.arxiv.exceptions import (
+from rag.service.arxiv.arxiv_exceptions import (
     ArxivInvalidDownloadedPdfError,
     ArxivInvalidPdfUrlError,
     ArxivPdfDownloadError,

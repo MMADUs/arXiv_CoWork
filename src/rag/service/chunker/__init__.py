@@ -1,7 +1,7 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-from rag.service.chunker.exceptions import (
+from rag.service.chunker.chunker_exceptions import (
     ChunkerConfigurationError,
     ChunkerExecutionError,
     ChunkerNonRetryableError,

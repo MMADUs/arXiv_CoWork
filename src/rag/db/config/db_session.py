@@ -7,8 +7,8 @@ from contextlib import contextmanager
 from sqlalchemy.orm import Session
 
 from rag.config import Settings, get_settings
-from rag.db.config.interface import DatabaseProvider
-from rag.db.config.factory import create_database
+from rag.db.config.db_interface import DatabaseProvider
+from rag.db.config.db_factory import create_database
 
 _global_db_session: DatabaseProvider | None = None
 

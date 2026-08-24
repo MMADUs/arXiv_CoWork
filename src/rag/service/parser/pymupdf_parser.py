@@ -5,7 +5,7 @@ from pathlib import Path
 
 import fitz
 
-from rag.service.parser.interface import ParserStrategy
+from rag.service.parser.parser_interface import ParserStrategy
 from rag.schema.document_schema import ParsedDocument, ParsedSection
 
 

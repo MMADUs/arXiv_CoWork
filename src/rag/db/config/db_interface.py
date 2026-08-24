@@ -23,6 +23,9 @@ class DatabaseProvider(ABC):
     def check_connection(self) -> tuple[bool, str]:
         """
         check db connection by execute simple query
+
+        Returns:
+            boolean flag if connection is ok and any successful message
         """
 
     @abstractmethod
@@ -35,4 +38,7 @@ class DatabaseProvider(ABC):
     def get_session(self) -> AbstractContextManager[Session]:
         """
         create db session for each request
+
+        Returns:
+            database session wrapped in abstract context manager
         """

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from rag.config import get_settings
 from rag.db.repository import PaperRepository
-from rag.service.arxiv.exceptions import (
+from rag.service.arxiv.arxiv_exceptions import (
     ArxivPaperNotFoundError,
     ArxivPersistenceError,
     ArxivServiceError,

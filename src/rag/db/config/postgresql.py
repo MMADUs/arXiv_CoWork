@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker, Session
 
-from rag.db.config.interface import DatabaseProvider
+from rag.db.config.db_interface import DatabaseProvider
 from rag.config import PostgresSettings
 
 logger = logging.getLogger(__name__)

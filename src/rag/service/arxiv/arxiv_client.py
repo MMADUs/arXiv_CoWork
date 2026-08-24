@@ -14,7 +14,7 @@ from dateutil import parser as date_parser
 
 from rag.config import ArxivSettings
 from rag.schema import ArxivQueryParams, ArxivPaperMetadata
-from rag.service.arxiv.exceptions import (
+from rag.service.arxiv.arxiv_exceptions import (
     ArxivMalformedEntryError,
     ArxivMetadataFetchError,
     ArxivMetadataParseError,
