@@ -4,11 +4,15 @@
 from collections.abc import AsyncIterator
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
 class LLMGenerationSettings:
+    """
+    LLM Generation settings controls the overall quality an constraints of output response
+    """
+
     # generative settings
     temperature: float = 0.2
     top_p: float = 0.9
@@ -21,6 +25,8 @@ class LLMGenerationSettings:
     num_ctx: int = 4096
     # stop tokens
     stop: str | list[str] | None = None
+    # structured response format, for providers that support it
+    response_format: Literal["json"] | None = None
 
     # hardware settings
     keep_alive: str | int = "10m"
@@ -29,6 +35,10 @@ class LLMGenerationSettings:
 
 @dataclass(frozen=True)
 class LLMUsageMetadata:
+    """
+    Response schema for LLM usage metadata after text generation
+    """
+
     prompt_tokens: int  # did retrieved context fit in num_ctx?
     completion_tokens: int  # output volume
     total_tokens: int  # prompt_tokens + completion_tokens
@@ -40,7 +50,11 @@ class LLMUsageMetadata:
 
 @dataclass(frozen=True)
 class LLMGenerationResult:
-    text: str
+    """
+    Response schema for LLM text generation
+    """
+
+    response_text: str
     provider: str
     model_name: str
     usage: LLMUsageMetadata
@@ -48,6 +62,11 @@ class LLMGenerationResult:
 
 
 class LLMProvider(ABC):
+    """
+    Any LLM providers must inherit the `LLMProvider` class,
+    this keeps any module that are dependent consistent when switching provider
+    """
+
     provider_name: str
     model_name: str
 
@@ -58,9 +77,12 @@ class LLMProvider(ABC):
         """
 
     @abstractmethod
-    async def health_check(self) -> bool:
+    async def health_check(self) -> tuple[bool, str]:
         """
         check provider backend availability
+
+        Returns:
+            boolean flag if connection is ok and any successful message
         """
 
     @abstractmethod

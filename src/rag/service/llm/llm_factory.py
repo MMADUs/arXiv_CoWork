@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 from rag.config import Settings, get_settings
-from rag.service.llm.interface import LLMProvider
-from rag.service.llm.ollama import OllamaLLMProvider
+from rag.service.llm.llm_interface import LLMProvider
+from rag.service.llm.ollama_llm import OllamaLLMProvider
 
 
 def create_llm_provider(settings: Settings | None = None) -> LLMProvider:

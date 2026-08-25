@@ -10,27 +10,44 @@ from typing import Any
 import httpx
 
 from rag.config import OllamaLLMSettings
-from rag.service.llm.interface import (
+from rag.service.llm.llm_interface import (
     LLMGenerationResult,
     LLMGenerationSettings,
     LLMProvider,
     LLMUsageMetadata,
 )
-from rag.service.llm.exception import (
+from rag.service.llm.llm_exceptions import (
     LLMConnectionError,
+    LLMProviderError,
     LLMResponseError,
     LLMTimeoutError,
+    LLMValidationError,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class OllamaLLMProvider(LLMProvider):
+    """
+    Ollama LLM provider.
+
+    Uses Ollama's `/api/generate` endpoint to generate text from a prompt.
+    The provider supports both full-response generation and token streaming
+    through the same endpoint by toggling Ollama's `stream` request field.
+
+    Generation requests include the configured model name, prompt, sampling
+    options, optional structured JSON output, and optional keep-alive behavior.
+    
+    Provider health is checked through Ollama's `/api/tags` endpoint.
+    """
+
     provider_name = "ollama"
 
     def __init__(self, settings: OllamaLLMSettings) -> None:
-        self.base_url = settings.base_url.rstrip("/")
+        # satisfy interface
         self.model_name = settings.model_name
+
+        self.base_url = settings.base_url.rstrip("/")
         self.max_retries = settings.max_retries
         self.retry_backoff_seconds = settings.retry_backoff_seconds
         self.last_stream_usage: LLMUsageMetadata | None = None
@@ -47,27 +64,49 @@ class OllamaLLMProvider(LLMProvider):
         try:
             response = await self._client.get(f"{self.base_url}/api/tags")
             response.raise_for_status()
-            return True
+            return True, "Ollama LLM connected"
 
-        except httpx.HTTPError:
-            return False
+        except httpx.HTTPError as error:
+            return False, str(error)
 
     async def generate(
         self, prompt: str, settings: LLMGenerationSettings
     ) -> LLMGenerationResult:
+        """
+        Generate response from the given prompt, the function awaits async process
+        until the model generates the end-of-text token.
+
+        Args:
+            prompts:
+                the full prompt including user query and available context
+            settings:
+                generation settings, affect generation result
+
+        Raises:
+            LLMValidationError:
+                If the given prompt is empty
+            LLMProviderError:
+                If the Ollama request fails after retries
+            LLMConnectionError:
+                If Ollama cannot be reached after retries
+            LLMTimeoutError:
+                If Ollama times out after retries
+            LLMResponseError:
+                If the response payload is invalid, either invalid json response or invalid keys
+        """
         if not prompt.strip():
-            raise ValueError("Cannot generate from an empty prompt.")
+            raise LLMValidationError("Cannot generate from an empty prompt")
 
         payload = self._make_payload(prompt=prompt, settings=settings, stream=False)
         data = await self._post_with_retries("/api/generate", payload)
 
-        text = data.get("response")
+        response_text = data.get("response")
 
-        if not isinstance(text, str):
+        if not isinstance(response_text, str):
             raise LLMResponseError("Ollama generation response did not include text.")
 
         return LLMGenerationResult(
-            text=text,
+            response_text=response_text,
             provider=self.provider_name,
             model_name=self.model_name,
             usage=self._make_usage_metadata(data),
@@ -77,8 +116,30 @@ class OllamaLLMProvider(LLMProvider):
     async def stream(
         self, prompt: str, settings: LLMGenerationSettings
     ) -> AsyncIterator[str]:
+        """
+        Stream response chunks from the given prompt as the model generates tokens.
+        Failed streams are retried only before any token has been yielded.
+
+        Args:
+            prompt:
+                the full prompt including user query and available context
+            settings:
+                generation settings, affect generation result
+
+        Raises:
+            LLMValidationError:
+                If the given prompt is empty
+            LLMProviderError:
+                If the Ollama stream fails after retries
+            LLMConnectionError:
+                If Ollama cannot be reached after retries
+            LLMTimeoutError:
+                If Ollama times out after retries
+            LLMResponseError:
+                If the stream payload is invalid, either invalid JSON or invalid status
+        """
         if not prompt.strip():
-            raise ValueError("Cannot generate from an empty prompt.")
+            raise LLMValidationError("Cannot generate from an empty prompt")
 
         payload = self._make_payload(prompt=prompt, settings=settings, stream=True)
 
@@ -110,6 +171,7 @@ class OllamaLLMProvider(LLMProvider):
                             continue
 
                         text = data.get("response")
+
                         if isinstance(text, str) and text:
                             yielded_any = True
                             yield text
@@ -125,11 +187,20 @@ class OllamaLLMProvider(LLMProvider):
                 last_exc = LLMTimeoutError(f"Ollama stream timed out: {error}")
 
             except httpx.HTTPStatusError as error:
-                last_exc = LLMResponseError(
-                    f"Ollama returned {error.response.status_code}: {error.response.text}"
-                )
+                if 500 <= error.response.status_code < 600:
+                    last_exc = LLMProviderError(
+                        "Ollama returned server error: "
+                        f"{error.response.status_code}: {error.response.text}"
+                    )
+                else:
+                    raise LLMResponseError(
+                        f"Ollama returned {error.response.status_code}: {error.response.text}"
+                    ) from error
 
-            except LLMResponseError as error:
+            except LLMResponseError:
+                raise
+
+            except LLMProviderError as error:
                 last_exc = error
 
             if yielded_any or attempt >= self.max_retries:
@@ -163,7 +234,13 @@ class OllamaLLMProvider(LLMProvider):
                 )
                 response.raise_for_status()
 
-                return response.json()
+                data = response.json()
+                if not isinstance(data, dict):
+                    raise LLMResponseError(
+                        "Ollama generation response must be a JSON object"
+                    )
+
+                return data
 
             except httpx.ConnectError as error:
                 last_exc = LLMConnectionError(
@@ -174,17 +251,20 @@ class OllamaLLMProvider(LLMProvider):
                 last_exc = LLMTimeoutError(f"Ollama request timed out: {error}")
 
             except httpx.HTTPStatusError as error:
-                if (
-                    500 <= error.response.status_code < 600
-                    and attempt < self.max_retries
-                ):
-                    last_exc = LLMResponseError(
-                        f"Ollama returned {error.response.status_code}: {error.response.text}"
+                if 500 <= error.response.status_code < 600:
+                    last_exc = LLMProviderError(
+                        "Ollama returned server error: "
+                        f"{error.response.status_code}: {error.response.text}"
                     )
                 else:
                     raise LLMResponseError(
                         f"Ollama returned {error.response.status_code}: {error.response.text}"
                     ) from error
+
+            except json.JSONDecodeError as error:
+                raise LLMResponseError(
+                    "Ollama generation response was not valid JSON"
+                ) from error
 
             if attempt < self.max_retries:
                 backoff = self.retry_backoff_seconds * (2**attempt)
@@ -226,6 +306,9 @@ class OllamaLLMProvider(LLMProvider):
             "stream": stream,
             "options": options,
         }
+
+        if settings.response_format == "json":
+            payload["format"] = "json"
 
         if settings.keep_alive is not None:
             payload["keep_alive"] = settings.keep_alive
