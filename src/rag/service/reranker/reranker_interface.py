@@ -13,23 +13,21 @@ class RerankCandidate:
     chunk: SearchHit
     original_rank: int
     original_score: float | None
+    reranker_rank: int
     reranker_score: float | None
-    final_score: float | None
-    final_rank: int
 
     def to_hit(self) -> SearchHit:
         source = {
             **self.chunk.source,
             "original_score": self.original_score,
             "original_rank": self.original_rank,
+            "reranker_rank": self.reranker_rank,
             "reranker_score": self.reranker_score,
-            "final_score": self.final_score,
-            "final_rank": self.final_rank,
         }
 
         return SearchHit(
             id=self.chunk.id,
-            score=self.final_score,
+            score=self.reranker_score,
             source=source,
             highlights=self.chunk.highlights,
         )
@@ -56,9 +54,8 @@ class RerankResult:
                     "chunk_id": candidate.chunk_id,
                     "original_rank": candidate.original_rank,
                     "original_score": candidate.original_score,
+                    "reranker_rank": candidate.reranker_rank,
                     "reranker_score": candidate.reranker_score,
-                    "final_score": candidate.final_score,
-                    "final_rank": candidate.final_rank,
                     "chunk": candidate.to_hit().to_dict(),
                 }
                 for candidate in self.reranked_candidates
@@ -68,7 +65,8 @@ class RerankResult:
 
 class RerankerProvider(ABC):
     """
-    Any reranker providers must inherit the `RerankerProvider` class
+    Any Reranker providers must inherit the `RerankerProvider` class,
+    this keeps any module that are dependent consistent when switching provider
     """
 
     provider_name: str

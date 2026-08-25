@@ -19,6 +19,10 @@ from rag.service.elasticsearch.searching.query_builder import ElasticsearchQuery
 
 @dataclass(slots=True)
 class SearchingServiceResult:
+    """
+    Response schema holds the retrieval result from searching service
+    """
+
     query: str
     mode: str
     size: int
@@ -38,6 +42,7 @@ class SearchingServiceResult:
 
 
 class SearchingService:
+    # TODO: make this configurable somewhere because its a hyperparameter.
     RRF_K = 60
     hybrid_candidate_pool_size = 50
 
