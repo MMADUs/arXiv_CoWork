@@ -13,6 +13,12 @@ from rag.db.model.chunk_model import (
     ChunkIndexingStatus,
     ChunkEmbeddingStatus,
 )
+from rag.db.model.conversation_model import (
+    ConversationMessageModel,
+    ConversationMessageRole,
+    ConversationMessageStatus,
+    ConversationRoomModel,
+)
 
 __all__ = [
     "PaperModel",
@@ -23,4 +29,8 @@ __all__ = [
     "ChunkModel",
     "ChunkIndexingStatus",
     "ChunkEmbeddingStatus",
+    "ConversationRoomModel",
+    "ConversationMessageModel",
+    "ConversationMessageRole",
+    "ConversationMessageStatus",
 ]

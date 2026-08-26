@@ -61,10 +61,11 @@ class PostgreSQLDatabase(DatabaseProvider):
         try:
             with self.engine.connect() as connection:
                 connection.execute(text("SELECT 1"))
+
+            return True, "PostgreSQL connected"
+
         except SQLAlchemyError as error:
             return False, str(error)
-
-        return True, "PostgreSQL connected"
 
     def shutdown(self) -> None:
         if self.engine is not None:
