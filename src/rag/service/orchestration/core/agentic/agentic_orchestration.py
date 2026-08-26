@@ -17,13 +17,15 @@ from rag.service.orchestration.core.agentic.schemas import (
     AgenticRAGResult,
 )
 from rag.service.orchestration.core.agentic.state import AgenticRAGState
-from rag.service.orchestration.core.direct import (
+from rag.service.orchestration.context_builder import (
     Citation,
+    PaperMetadata,
+    Source,
+)
+from rag.service.orchestration.input_guardrails import (
     GuardrailDecision,
     GuardrailRiskLevel,
     InputGuardrailResult,
-    PaperMetadata,
-    Source,
 )
 from rag.service.reranker import RerankerProvider
 

@@ -5,7 +5,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from rag.service.llm import LLMUsageMetadata
-from rag.service.orchestration.core.direct import Citation, InputGuardrailResult, Source
+from rag.service.orchestration.context_builder import Citation, Source
+from rag.service.orchestration.input_guardrails import InputGuardrailResult
 
 
 ScopeDecisionName = Literal["retrieve", "direct_response", "out_of_scope"]

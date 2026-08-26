@@ -1,8 +1,8 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
-from collections.abc import AsyncIterator
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -10,7 +10,7 @@ from typing import Any, Literal
 @dataclass(frozen=True)
 class LLMGenerationSettings:
     """
-    LLM Generation settings controls the overall quality an constraints of output response
+    LLM generation settings control the quality and constraints of the response.
     """
 
     # generative settings
@@ -18,11 +18,12 @@ class LLMGenerationSettings:
     top_p: float = 0.9
     top_k: int = 40
     repeat_penalty: float = 1.0
+    reasoning: bool | None = None
 
     # max response token
-    max_tokens: int = 1024
+    max_tokens: int = 2048
     # max context: prompt + query + response
-    num_ctx: int = 4096
+    num_ctx: int = 8192
     # stop tokens
     stop: str | list[str] | None = None
     # structured response format, for providers that support it
@@ -94,7 +95,7 @@ class LLMProvider(ABC):
         """
 
     @abstractmethod
-    async def stream(
+    def stream(
         self, prompt: str, settings: LLMGenerationSettings
     ) -> AsyncIterator[str]:
         """

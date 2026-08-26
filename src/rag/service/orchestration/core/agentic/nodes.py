@@ -10,25 +10,23 @@ from typing import Any
 from rag.config import AgenticRAGSettings
 from rag.service.elasticsearch.searching import SearchingService
 from rag.service.llm import LLMGenerationSettings, LLMProvider
-from rag.service.orchestration.core.agentic.json_utils import parse_json_object
-from rag.service.orchestration.core.agentic.prompts import (
+from rag.service.orchestration.prompts.agentic_prompt import (
     ANSWER_CRITIC_PROMPT,
     ANSWER_REPAIR_PROMPT,
     EVIDENCE_GRADER_PROMPT,
     QUERY_REWRITE_PROMPT,
     SCOPE_ROUTER_PROMPT,
 )
+from rag.service.orchestration.utils import parse_json_object
 from rag.service.orchestration.core.agentic.state import (
     AgenticRAGState,
     append_step,
     hits_from_state,
     hits_to_state,
 )
-from rag.service.orchestration.core.direct import (
-    ContextBuilder,
-    InputGuardrails,
-    PromptBuilder,
-)
+from rag.service.orchestration.context_builder import ContextBuilder
+from rag.service.orchestration.input_guardrails import InputGuardrails
+from rag.service.orchestration.prompt_builder import PromptBuilder
 from rag.service.reranker import RerankerProvider
 
 

@@ -10,18 +10,18 @@ from typing import Any
 import httpx
 
 from rag.config import OllamaLLMSettings
-from rag.service.llm.llm_interface import (
-    LLMGenerationResult,
-    LLMGenerationSettings,
-    LLMProvider,
-    LLMUsageMetadata,
-)
 from rag.service.llm.llm_exceptions import (
     LLMConnectionError,
     LLMProviderError,
     LLMResponseError,
     LLMTimeoutError,
     LLMValidationError,
+)
+from rag.service.llm.llm_interface import (
+    LLMGenerationResult,
+    LLMGenerationSettings,
+    LLMProvider,
+    LLMUsageMetadata,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class OllamaLLMProvider(LLMProvider):
 
     Generation requests include the configured model name, prompt, sampling
     options, optional structured JSON output, and optional keep-alive behavior.
-    
+
     Provider health is checked through Ollama's `/api/tags` endpoint.
     """
 
@@ -60,7 +60,7 @@ class OllamaLLMProvider(LLMProvider):
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def health_check(self) -> bool:
+    async def health_check(self) -> tuple[bool, str]:
         try:
             response = await self._client.get(f"{self.base_url}/api/tags")
             response.raise_for_status()
@@ -92,7 +92,7 @@ class OllamaLLMProvider(LLMProvider):
             LLMTimeoutError:
                 If Ollama times out after retries
             LLMResponseError:
-                If the response payload is invalid, either invalid json response or invalid keys
+                If the response payload is invalid, malformed JSON, or missing keys
         """
         if not prompt.strip():
             raise LLMValidationError("Cannot generate from an empty prompt")
@@ -194,7 +194,8 @@ class OllamaLLMProvider(LLMProvider):
                     )
                 else:
                     raise LLMResponseError(
-                        f"Ollama returned {error.response.status_code}: {error.response.text}"
+                        "Ollama returned "
+                        f"{error.response.status_code}: {error.response.text}"
                     ) from error
 
             except LLMResponseError:
@@ -210,7 +211,8 @@ class OllamaLLMProvider(LLMProvider):
             backoff = self.retry_backoff_seconds * (2**attempt)
 
             logger.warning(
-                "Ollama stream failed before yielding tokens (attempt %d/%d), retrying in %.1fs: %s",
+                "Ollama stream failed before yielding tokens "
+                "(attempt %d/%d), retrying in %.1fs: %s",
                 attempt + 1,
                 self.max_retries + 1,
                 backoff,
@@ -258,7 +260,8 @@ class OllamaLLMProvider(LLMProvider):
                     )
                 else:
                     raise LLMResponseError(
-                        f"Ollama returned {error.response.status_code}: {error.response.text}"
+                        "Ollama returned "
+                        f"{error.response.status_code}: {error.response.text}"
                     ) from error
 
             except json.JSONDecodeError as error:
@@ -306,6 +309,9 @@ class OllamaLLMProvider(LLMProvider):
             "stream": stream,
             "options": options,
         }
+
+        if settings.reasoning is not None:
+            payload["think"] = settings.reasoning
 
         if settings.response_format == "json":
             payload["format"] = "json"
