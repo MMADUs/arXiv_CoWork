@@ -4,15 +4,38 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from rag.config import get_settings
-from rag.service.elasticsearch.config.client import ElasticsearchClient
+from rag.service.embedding import (
+    EmbeddingNonRetryableError,
+    EmbeddingRetryableError,
+    EmbeddingServiceError,
+    EmbeddingValidationError,
+)
+from rag.service.embedding.config.embedding_interface import EmbeddingProvider
+from rag.service.elasticsearch import (
+    ElasticsearchNonRetryableError,
+    ElasticsearchRetryableError,
+    ElasticsearchServiceError,
+)
+from rag.service.elasticsearch.config.es_client import ElasticsearchClient
 from rag.service.elasticsearch.searching import SearchingService
-from rag.service.embedding.config.interface import EmbeddingProvider
-from rag.service.llm.interface import LLMProvider
-from rag.service.orchestration.agentic import (
+from rag.service.llm import (
+    LLMNonRetryableError,
+    LLMRetryableError,
+    LLMServiceError,
+    LLMValidationError,
+)
+from rag.service.llm.llm_interface import LLMProvider
+from rag.service.orchestration.core.agentic import (
     AgenticRAGOrchestrator,
     AgenticRAGRequest,
 )
-from rag.service.reranker.interface import RerankerProvider
+from rag.service.reranker import (
+    RerankerNonRetryableError,
+    RerankerRetryableError,
+    RerankerServiceError,
+    RerankerValidationError,
+)
+from rag.service.reranker.reranker_interface import RerankerProvider
 from server.dependencies import (
     get_elasticsearch_client,
     get_embedding_provider,
@@ -88,6 +111,96 @@ async def agentic_ask(
     except ValueError as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
+
+    except EmbeddingValidationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
+
+    except EmbeddingNonRetryableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    except EmbeddingRetryableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
+
+    except EmbeddingServiceError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+    except ElasticsearchNonRetryableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    except ElasticsearchRetryableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
+
+    except ElasticsearchServiceError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+    except LLMValidationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
+
+    except LLMNonRetryableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    except LLMRetryableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
+
+    except LLMServiceError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(error),
+        ) from error
+
+    except RerankerValidationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(error),
+        ) from error
+
+    except RerankerNonRetryableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    except RerankerRetryableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
+
+    except RerankerServiceError as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(error),
         ) from error
 

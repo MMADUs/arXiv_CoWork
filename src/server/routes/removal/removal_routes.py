@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from rag.service.elasticsearch.config.client import ElasticsearchClient
+from rag.service.elasticsearch.config.es_client import ElasticsearchClient
 from rag.service.storage import StorageProvider
 from server.dependencies import (
     get_db_session,

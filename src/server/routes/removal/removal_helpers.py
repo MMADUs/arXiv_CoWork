@@ -13,7 +13,7 @@ from rag.db.model import (
     PaperParserStatus,
 )
 from rag.db.repository import ChunkRepository, PaperRepository
-from rag.service.elasticsearch.config.client import ElasticsearchClient
+from rag.service.elasticsearch.config.es_client import ElasticsearchClient
 from rag.service.storage import StorageProvider
 from server.routes.removal.removal_schema import (
     DeletePaperIndexResponse,
@@ -23,18 +23,14 @@ from server.routes.removal.removal_schema import (
 
 class PaperRemovalNotFoundError(RuntimeError):
     """
-    Paper not found error during removal
+    Paper not found error during deletion process
     """
-
-    pass
 
 
 class PaperRemovalConflictError(RuntimeError):
     """
-    Paper not found error during removal
+    Conflict error when trying to perform deletion but other process/state still ongoing
     """
-
-    pass
 
 
 def delete_paper_metadata(
@@ -111,7 +107,7 @@ def delete_paper_index(
 
     deleted_chunks = chunk_repository.delete_by_paper_id(paper_id)
     paper_repository.mark_chunks_removed(paper)
-    
+
     session.commit()
 
     return DeletePaperIndexResponse(

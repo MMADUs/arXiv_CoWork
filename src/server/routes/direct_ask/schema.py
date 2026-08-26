@@ -48,10 +48,6 @@ class DirectAskCitationResponse(BaseModel):
     section_title: str | None
     pdf_url: str
     chunk_index: int
-    start_word: int
-    end_word: int
-    start_char: int
-    end_char: int
     score: float | None
     highlights: list[str]
 
@@ -82,11 +78,7 @@ class DirectAskUsageResponse(BaseModel):
 class DirectAskMetadataResponse(BaseModel):
     retrieval_mode: RetrievalMode
     use_reranker: bool
-    search_candidates: int
-    context_chunks: int
     total_hits: int
-    guardrail_risk_level: str
-    guardrail_categories: list[str]
     answer_model: str | None
     answer_usage: DirectAskUsageResponse | None
     reranker_model: str | None = None
