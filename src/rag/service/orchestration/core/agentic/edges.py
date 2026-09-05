@@ -24,7 +24,10 @@ def route_after_followup(state: AgenticRAGState) -> str:
     if state.get("followup", {}).get("route") == "use_active_context":
         return "build_context"
 
-    return "retrieval_planner"
+    if not bool(state.get("requires_retrieval", True)):
+        return "answer_generator"
+
+    return "prepare_retrieval"
 
 
 def route_after_evidence(state: AgenticRAGState) -> str:
@@ -36,10 +39,17 @@ def route_after_evidence(state: AgenticRAGState) -> str:
     if grade in {"weak", "none"} and rewrite_enabled and attempts < max_attempts:
         return "rewrite_query"
 
-    if grade == "none":
+    if grade in {"weak", "none"}:
         return "no_context_fallback"
 
     return "answer_generator"
+
+
+def route_after_answer(state: AgenticRAGState) -> str:
+    if bool(state.get("enable_answer_critique", False)):
+        return "answer_critic"
+
+    return "save_thread_state"
 
 
 def route_after_critic(state: AgenticRAGState) -> str:

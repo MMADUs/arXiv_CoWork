@@ -3,6 +3,7 @@
 
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from datetime import date
 from typing import Any
@@ -14,13 +15,13 @@ from rag.service.orchestration.prompts.agentic_prompt import (
     ANSWER_CRITIC_PROMPT,
     ANSWER_REPAIR_PROMPT,
     EVIDENCE_GRADER_PROMPT,
+    FOLLOWUP_ROUTER_PROMPT,
     QUERY_REWRITE_PROMPT,
     SCOPE_ROUTER_PROMPT,
 )
 from rag.service.orchestration.utils import parse_json_object
 from rag.service.orchestration.core.agentic.state import (
     AgenticRAGState,
-    append_step,
     hits_from_state,
     hits_to_state,
 )
@@ -40,6 +41,7 @@ class AgenticRAGNodes:
         input_guardrails: InputGuardrails | None = None,
         context_builder: ContextBuilder | None = None,
         prompt_builder: PromptBuilder | None = None,
+        status_callback: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.settings = settings
         self.searching_service = searching_service
@@ -48,6 +50,7 @@ class AgenticRAGNodes:
         self.input_guardrails = input_guardrails or InputGuardrails(llm_provider)
         self.context_builder = context_builder or ContextBuilder()
         self.prompt_builder = prompt_builder or PromptBuilder()
+        self.status_callback = status_callback
         self.decision_settings = LLMGenerationSettings(
             temperature=0.0,
             top_p=1.0,
@@ -75,21 +78,27 @@ class AgenticRAGNodes:
         )
 
     async def input_guardrail(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Checking request safety...")
+
         question = " ".join(state["question"].split())
-        guardrail = await self.input_guardrails.evaluate(question)
+        guardrail = await self.input_guardrails.evaluate_user_query(question)
 
         base_update: dict[str, Any] = {
             "question": question,
             "original_query": question,
+            "resolved_query": question,
             "rewritten_query": None,
             "blocked": not guardrail.allowed,
+            "is_safe": guardrail.allowed,
+            "is_in_scope": False,
+            "is_followup": False,
+            "requires_retrieval": True,
             "answer": "",
             "guardrail": guardrail.to_dict(),
             "scope": {},
             "followup": {},
             "retrieval_plan": {},
             "evidence_grade": {},
-            "citation_verification": {},
             "answer_critique": {},
             "search_hits": [],
             "reranked_hits": [],
@@ -98,7 +107,6 @@ class AgenticRAGNodes:
             "sources": [],
             "retrieval_attempts": 0,
             "answer_repair_attempts": 0,
-            "reasoning_steps": [],
             "errors": [],
             "metadata": {},
         }
@@ -107,30 +115,19 @@ class AgenticRAGNodes:
             return {
                 **base_update,
                 "answer": guardrail.response or "Sorry, I can't process that request.",
-                "reasoning_steps": [
-                    {
-                        "step": "input_guardrail",
-                        "decision": "blocked",
-                        "categories": guardrail.categories,
-                    }
-                ],
             }
 
         assert guardrail.safe_query is not None
+
         return {
             **base_update,
             "safe_query": guardrail.safe_query,
             "current_query": guardrail.safe_query,
-            "reasoning_steps": [
-                {
-                    "step": "input_guardrail",
-                    "decision": "allowed",
-                    "categories": guardrail.categories,
-                }
-            ],
         }
 
     async def scope_router(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Checking research scope...")
+
         question = state["safe_query"]
         fallback = self._fallback_scope(question)
 
@@ -139,7 +136,9 @@ class AgenticRAGNodes:
                 SCOPE_ROUTER_PROMPT.format(question=question),
                 self.decision_settings,
             )
+
             decision = str(data.get("decision", fallback["decision"]))
+
             if decision not in {"retrieve", "direct_response", "out_of_scope"}:
                 raise ValueError("invalid scope decision")
 
@@ -154,6 +153,7 @@ class AgenticRAGNodes:
             scope = {**fallback, "fallback_error": str(error)}
 
         answer = ""
+
         if scope["decision"] == "direct_response":
             answer = str(
                 scope.get("response")
@@ -171,59 +171,77 @@ class AgenticRAGNodes:
                 )
             )
 
+        requires_retrieval = scope["decision"] == "retrieve"
+
         return {
             "scope": scope,
             "answer": answer,
-            "reasoning_steps": append_step(
-                state,
-                "scope_router",
-                {"decision": scope["decision"], "reason": scope["reason"]},
-            ),
+            "is_in_scope": scope["decision"] != "out_of_scope",
+            "requires_retrieval": requires_retrieval,
         }
 
     async def followup_router(self, state: AgenticRAGState) -> dict[str, Any]:
-        question = state["safe_query"].lower()
-        active_hits = state.get("active_hits", [])
-        enabled = self.settings.enable_followup_context
+        await self._emit_status("Resolving conversation context...")
 
-        followup_markers = [
-            "source",
-            "previous",
-            "above",
-            "top",
-            "second",
-            "third",
-            "them",
-            "those",
-            "compare",
-            "which one",
-            "explain it",
-            "explain this",
-        ]
+        question = state["safe_query"]
+        fallback = self._fallback_followup(state)
 
-        if (
-            enabled
-            and active_hits
-            and any(marker in question for marker in followup_markers)
-        ):
-            route = "use_active_context"
-            reason = "Question appears to refer to previously retrieved sources."
+        if not self.settings.enable_followup_context:
+            followup = {
+                **fallback,
+                "route": "new_retrieval",
+                "reason": "Follow-up context is disabled.",
+            }
         else:
-            route = "new_retrieval"
-            reason = "Question needs a fresh retrieval pass."
+            try:
+                data = await self._structured_json(
+                    FOLLOWUP_ROUTER_PROMPT.format(
+                        question=question,
+                        conversation_context=self._format_conversation_context(
+                            state.get("conversation_context", [])
+                        ),
+                    ),
+                    self.decision_settings,
+                )
 
-        followup = {"route": route, "reason": reason}
+                resolved_query = " ".join(
+                    str(data.get("resolved_query") or question).split()
+                )
+                requires_retrieval = bool(data.get("requires_retrieval", True))
+                reuse_previous_evidence = bool(
+                    data.get("reuse_previous_evidence", False)
+                )
+
+                route = (
+                    "use_active_context"
+                    if reuse_previous_evidence and state.get("active_hits", [])
+                    else "new_retrieval"
+                )
+
+                followup = {
+                    "route": route,
+                    "is_followup": bool(data.get("is_followup", False)),
+                    "resolved_query": resolved_query or question,
+                    "requires_retrieval": requires_retrieval,
+                    "reuse_previous_evidence": reuse_previous_evidence,
+                    "reason": str(data.get("reason", "LLM follow-up routing")),
+                }
+
+            except Exception as error:
+                followup = {**fallback, "fallback_error": str(error)}
+
         return {
             "followup": followup,
-            "reasoning_steps": append_step(
-                state,
-                "followup_router",
-                followup,
-            ),
+            "is_followup": bool(followup.get("is_followup", False)),
+            "requires_retrieval": bool(followup.get("requires_retrieval", True)),
+            "resolved_query": str(followup.get("resolved_query") or question),
+            "current_query": str(followup.get("resolved_query") or question),
         }
 
-    async def retrieval_planner(self, state: AgenticRAGState) -> dict[str, Any]:
-        query = state["current_query"]
+    async def prepare_retrieval(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Preparing retrieval...")
+
+        query = state.get("resolved_query") or state["current_query"]
         lower_query = query.lower()
 
         retrieval_mode = state.get("retrieval_mode") or "hybrid"
@@ -241,6 +259,7 @@ class AgenticRAGNodes:
             state.get("include_highlights") or retrieval_mode in {"bm25", "hybrid"}
         )
         fuzziness = state.get("fuzziness")
+
         if fuzziness is None and any(
             word in lower_query for word in ["title", "called"]
         ):
@@ -268,18 +287,11 @@ class AgenticRAGNodes:
 
         return {
             "retrieval_plan": plan,
-            "reasoning_steps": append_step(
-                state,
-                "retrieval_planner",
-                {
-                    "mode": retrieval_mode,
-                    "top_k": top_k,
-                    "use_reranker": plan["use_reranker"],
-                },
-            ),
         }
 
     async def retrieve(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Retrieving documents...")
+
         plan = state["retrieval_plan"]
         use_reranker = bool(plan["use_reranker"])
         size = plan["candidate_pool_size"] if use_reranker else plan["top_k"]
@@ -309,22 +321,12 @@ class AgenticRAGNodes:
                 "last_total_hits": result.total,
                 "last_search_candidates": len(result.results),
             }
+
             return {
                 "retrieval_attempts": attempts,
                 "search_hits": hits_to_state(result.results),
                 "reranked_hits": [],
                 "metadata": metadata,
-                "reasoning_steps": append_step(
-                    state,
-                    "retrieve",
-                    {
-                        "attempt": attempts,
-                        "query": result.query,
-                        "mode": result.mode,
-                        "candidates": len(result.results),
-                        "total_hits": result.total,
-                    },
-                ),
             }
 
         except Exception as error:
@@ -335,25 +337,17 @@ class AgenticRAGNodes:
                 "search_hits": [],
                 "reranked_hits": [],
                 "errors": errors,
-                "reasoning_steps": append_step(
-                    state,
-                    "retrieve",
-                    {"attempt": attempts, "error": str(error)},
-                ),
             }
 
     async def rerank(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Reranking evidence...")
+
         plan = state["retrieval_plan"]
         hits = hits_from_state(state.get("search_hits", []))
 
         if not plan.get("use_reranker"):
             return {
                 "reranked_hits": [],
-                "reasoning_steps": append_step(
-                    state,
-                    "rerank",
-                    {"used": False, "reason": "reranker disabled"},
-                ),
             }
 
         if self.reranker_provider is None:
@@ -362,11 +356,6 @@ class AgenticRAGNodes:
             return {
                 "reranked_hits": [],
                 "errors": errors,
-                "reasoning_steps": append_step(
-                    state,
-                    "rerank",
-                    {"used": False, "reason": "provider unavailable"},
-                ),
             }
 
         try:
@@ -375,23 +364,16 @@ class AgenticRAGNodes:
                 chunks=hits,
                 top_k=int(plan["top_k"]),
             )
+
             metadata = {
                 **state.get("metadata", {}),
                 "reranker_model": result.model_name,
                 "reranker_latency_ms": result.latency_ms,
             }
+
             return {
                 "reranked_hits": hits_to_state(result.hits()),
                 "metadata": metadata,
-                "reasoning_steps": append_step(
-                    state,
-                    "rerank",
-                    {
-                        "used": True,
-                        "model": result.model_name,
-                        "latency_ms": result.latency_ms,
-                    },
-                ),
             }
 
         except Exception as error:
@@ -400,14 +382,11 @@ class AgenticRAGNodes:
             return {
                 "reranked_hits": [],
                 "errors": errors,
-                "reasoning_steps": append_step(
-                    state,
-                    "rerank",
-                    {"used": False, "error": str(error)},
-                ),
             }
 
     async def build_context(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Building citation context...")
+
         if state.get("followup", {}).get("route") == "use_active_context":
             hit_values = state.get("active_hits", [])
         else:
@@ -417,39 +396,26 @@ class AgenticRAGNodes:
         top_k = int(
             state.get("retrieval_plan", {}).get("top_k", self.settings.default_top_k)
         )
+
         context = self.context_builder.build_context(hits[:top_k])
+        context_data = {
+            **context.to_dict(),
+            "chunk_count": len(context.citations),
+            "context_char_count": context.context_size,
+        }
         citations = [citation.to_dict() for citation in context.citations]
         sources = [source.to_dict() for source in context.sources]
 
-        active_paper_ids = [
-            source["paper_id"] for source in sources if source.get("paper_id")
-        ]
-        active_summary = self._source_summary(sources)
-
         return {
-            "context": context.to_dict(),
+            "context": context_data,
             "citations": citations,
             "sources": sources,
             "active_hits": hits_to_state(hits[:top_k]),
-            "active_chunk_ids": [
-                citation["chunk_id"]
-                for citation in citations
-                if citation.get("chunk_id")
-            ],
-            "active_paper_ids": active_paper_ids,
-            "active_context_summary": active_summary,
-            "reasoning_steps": append_step(
-                state,
-                "build_context",
-                {
-                    "chunks": context.chunk_count,
-                    "papers": len(context.sources),
-                    "context_chars": context.context_char_count,
-                },
-            ),
         }
 
     async def evidence_grader(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Checking evidence quality...")
+
         context = state.get("context", {})
         context_prompt = str(context.get("context_prompt", ""))
         fallback = self._fallback_evidence_grade(state)
@@ -460,7 +426,7 @@ class AgenticRAGNodes:
             try:
                 data = await self._structured_json(
                     EVIDENCE_GRADER_PROMPT.format(
-                        question=state["safe_query"],
+                        question=state.get("resolved_query") or state["safe_query"],
                         context=self._truncate(context_prompt, 6_000),
                     ),
                     self.decision_settings,
@@ -474,80 +440,88 @@ class AgenticRAGNodes:
                     "score": float(data.get("score", fallback["score"])),
                     "reason": str(data.get("reason", fallback["reason"])),
                 }
+
             except Exception as error:
                 grade = {**fallback, "fallback_error": str(error)}
 
         return {
             "evidence_grade": grade,
-            "reasoning_steps": append_step(
-                state,
-                "evidence_grader",
-                grade,
-            ),
         }
 
     async def rewrite_query(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Refining search query...")
         evidence = state.get("evidence_grade", {})
         fallback_query = self._fallback_rewrite_query(state)
 
         try:
             data = await self._structured_json(
                 QUERY_REWRITE_PROMPT.format(
-                    question=state["safe_query"],
+                    question=state.get("resolved_query") or state["safe_query"],
                     current_query=state["current_query"],
                     evidence_reason=evidence.get("reason", "weak evidence"),
                 ),
                 self.rewrite_settings,
             )
             query = " ".join(str(data.get("query", fallback_query)).split())
-            reason = str(data.get("reason", "LLM query rewrite"))
             if not query:
                 raise ValueError("empty rewritten query")
 
-        except Exception as error:
+        except Exception:
             query = fallback_query
-            reason = f"fallback rewrite after error: {error}"
 
         return {
             "current_query": query,
             "rewritten_query": query,
-            "reasoning_steps": append_step(
-                state,
-                "rewrite_query",
-                {"query": query, "reason": reason},
-            ),
         }
 
     async def no_context_fallback(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Preparing insufficient-evidence response...")
         return {
             "answer": "The indexed sources are insufficient to answer this question.",
-            "citation_verification": {
-                "valid": True,
-                "cited_source_numbers": [],
-                "invalid_source_numbers": [],
-                "missing_citations": False,
-                "reason": "No answer citations required for no-context fallback.",
-            },
-            "reasoning_steps": append_step(
-                state,
-                "no_context_fallback",
-                {"reason": state.get("evidence_grade", {}).get("reason")},
-            ),
         }
 
     async def answer_generator(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Generating answer...")
+
         context_data = state.get("context", {})
-        if not str(context_data.get("context_prompt", "")).strip():
+        requires_retrieval = bool(state.get("requires_retrieval", True))
+        has_context = bool(str(context_data.get("context_prompt", "")).strip())
+
+        if requires_retrieval and not has_context:
             return await self.no_context_fallback(state)
 
-        built_prompt = self.prompt_builder.build(
-            question=state["safe_query"],
+        if not has_context:
+            generation = await self.llm_provider.generate(
+                prompt=self._build_direct_answer_prompt(state),
+                settings=self.answer_settings,
+            )
+
+            metadata = {
+                **state.get("metadata", {}),
+                "answer_model": generation.model_name,
+                "answer_usage": asdict(generation.usage),
+            }
+
+            return {
+                "answer": generation.response_text,
+                "metadata": metadata,
+            }
+
+        built_prompt = self.prompt_builder.build_prompt(
+            question=state.get("resolved_query") or state["safe_query"],
             context=self._context_from_state(context_data),
         )
-        generation = await self.llm_provider.generate(
+
+        prompt = self._inject_conversation_context(
             prompt=built_prompt.prompt,
+            conversation_context=state.get("conversation_context", []),
+        )
+
+        generation = await self.llm_provider.generate(
+            prompt=prompt,
             settings=self.answer_settings,
         )
+
         metadata = {
             **state.get("metadata", {}),
             "answer_model": generation.model_name,
@@ -557,72 +531,37 @@ class AgenticRAGNodes:
         return {
             "answer": generation.response_text,
             "metadata": metadata,
-            "reasoning_steps": append_step(
-                state,
-                "answer_generator",
-                {
-                    "model": generation.model_name,
-                    "source_count": built_prompt.source_count,
-                },
-            ),
-        }
-
-    async def citation_verifier(self, state: AgenticRAGState) -> dict[str, Any]:
-        answer = state.get("answer", "")
-        valid_numbers = {
-            int(citation["source_number"]) for citation in state.get("citations", [])
-        }
-        cited_numbers = sorted(
-            {
-                int(match)
-                for match in re.findall(r"\[Source\s+(\d+)\]", answer, re.IGNORECASE)
-            }
-        )
-        invalid_numbers = [
-            source_number
-            for source_number in cited_numbers
-            if source_number not in valid_numbers
-        ]
-        missing_citations = bool(state.get("citations")) and not cited_numbers
-        verification = {
-            "valid": not invalid_numbers and not missing_citations,
-            "cited_source_numbers": cited_numbers,
-            "invalid_source_numbers": invalid_numbers,
-            "missing_citations": missing_citations,
-            "available_source_numbers": sorted(valid_numbers),
-        }
-
-        return {
-            "citation_verification": verification,
-            "reasoning_steps": append_step(
-                state,
-                "citation_verifier",
-                verification,
-            ),
         }
 
     async def answer_critic(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Reviewing answer...")
+
+        citation_verification = self._verify_citations(state)
+
         if not self.settings.enable_answer_critique:
             critique = self._passing_critique("answer critique disabled")
         else:
-            fallback = self._fallback_answer_critique(state)
+            fallback = self._fallback_answer_critique(citation_verification)
+
             try:
                 data = await self._structured_json(
                     ANSWER_CRITIC_PROMPT.format(
-                        question=state["safe_query"],
+                        question=state.get("resolved_query") or state["safe_query"],
                         context=self._truncate(
                             str(state.get("context", {}).get("context_prompt", "")),
                             6_000,
                         ),
                         answer=state.get("answer", ""),
                         citation_verification=json.dumps(
-                            state.get("citation_verification", {}),
+                            citation_verification,
                             ensure_ascii=True,
                         ),
                     ),
                     self.decision_settings,
                 )
+
                 verdict = str(data.get("verdict", fallback["verdict"]))
+
                 if verdict not in {"pass", "repair", "fail"}:
                     raise ValueError("invalid critique verdict")
 
@@ -649,70 +588,53 @@ class AgenticRAGNodes:
 
         return {
             "answer_critique": critique,
-            "reasoning_steps": append_step(
-                state,
-                "answer_critic",
-                {
-                    "verdict": critique["verdict"],
-                    "issues": critique.get("issues", []),
-                },
-            ),
         }
 
     async def answer_repair(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Repairing answer...")
+
         attempts = int(state.get("answer_repair_attempts", 0)) + 1
         prompt = ANSWER_REPAIR_PROMPT.format(
-            question=state["safe_query"],
+            question=state.get("resolved_query") or state["safe_query"],
             context=state.get("context", {}).get("context_prompt", ""),
             answer=state.get("answer", ""),
             critique=json.dumps(state.get("answer_critique", {}), ensure_ascii=True),
         )
+
         generation = await self.llm_provider.generate(
             prompt=prompt,
             settings=self.repair_settings,
         )
+
         metadata = {
             **state.get("metadata", {}),
             "answer_model": generation.model_name,
             "answer_usage": asdict(generation.usage),
         }
+
         return {
             "answer": generation.response_text,
             "answer_repair_attempts": attempts,
             "metadata": metadata,
-            "reasoning_steps": append_step(
-                state,
-                "answer_repair",
-                {"attempt": attempts, "model": generation.model_name},
-            ),
         }
 
     async def targeted_retrieval(self, state: AgenticRAGState) -> dict[str, Any]:
+        await self._emit_status("Retrieving targeted evidence...")
+
         query = self._fallback_rewrite_query(state)
+
         return {
             "current_query": query,
             "rewritten_query": query,
-            "reasoning_steps": append_step(
-                state,
-                "targeted_retrieval",
-                {"query": query, "reason": "critic requested stronger evidence"},
-            ),
         }
 
     async def save_thread_state(self, state: AgenticRAGState) -> dict[str, Any]:
-        return {
-            "reasoning_steps": append_step(
-                state,
-                "save_thread_state",
-                {
-                    "active_chunks": len(state.get("active_chunk_ids", [])),
-                    "active_papers": len(state.get("active_paper_ids", [])),
-                },
-            )
-        }
+        await self._emit_status("Saving conversation state...")
+        return {}
 
     def _fallback_scope(self, question: str) -> dict[str, Any]:
         lower = question.lower()
+
         direct_markers = ["what can you do", "help", "how do i ask", "who are you"]
         out_markers = ["recipe", "weather", "stock price", "travel itinerary"]
 
@@ -745,8 +667,49 @@ class AgenticRAGNodes:
             "response": None,
         }
 
+    def _fallback_followup(self, state: AgenticRAGState) -> dict[str, Any]:
+        question = state["safe_query"]
+        lower_question = question.lower()
+        active_hits = state.get("active_hits", [])
+        has_context = bool(state.get("conversation_context", []))
+        followup_markers = [
+            "source",
+            "previous",
+            "above",
+            "top",
+            "second",
+            "third",
+            "them",
+            "those",
+            "compare",
+            "which one",
+            "explain it",
+            "explain this",
+            "what about",
+        ]
+
+        is_followup = has_context and any(
+            marker in lower_question for marker in followup_markers
+        )
+        reuse_previous_evidence = is_followup and bool(active_hits)
+        route = "use_active_context" if reuse_previous_evidence else "new_retrieval"
+
+        return {
+            "route": route,
+            "is_followup": is_followup,
+            "resolved_query": question,
+            "requires_retrieval": True,
+            "reuse_previous_evidence": reuse_previous_evidence,
+            "reason": (
+                "Question appears to refer to previous evidence."
+                if is_followup
+                else "Question needs a fresh retrieval pass."
+            ),
+        }
+
     def _fallback_evidence_grade(self, state: AgenticRAGState) -> dict[str, Any]:
         chunk_count = int(state.get("context", {}).get("chunk_count", 0))
+
         if chunk_count == 0:
             return {
                 "grade": "none",
@@ -767,9 +730,10 @@ class AgenticRAGNodes:
             "reason": "Retrieved context contains enough chunks for answer generation.",
         }
 
-    def _fallback_answer_critique(self, state: AgenticRAGState) -> dict[str, Any]:
-        verification = state.get("citation_verification", {})
-
+    def _fallback_answer_critique(
+        self,
+        verification: dict[str, Any],
+    ) -> dict[str, Any]:
         if not verification.get("valid", True):
             return {
                 "verdict": "repair",
@@ -778,7 +742,9 @@ class AgenticRAGNodes:
                 "completeness_score": 0.5,
                 "issues": ["Citation verification failed."],
                 "unsupported_claims": [],
-                "suggested_fix": "Repair the answer so every factual claim cites valid sources.",
+                "suggested_fix": (
+                    "Repair the answer so every factual claim cites valid sources."
+                ),
             }
 
         return self._passing_critique("deterministic citation checks passed")
@@ -796,7 +762,11 @@ class AgenticRAGNodes:
 
     def _fallback_rewrite_query(self, state: AgenticRAGState) -> str:
         pieces = [state.get("original_query") or state.get("safe_query", "")]
-        active_paper_ids = state.get("active_paper_ids", [])
+        active_paper_ids = [
+            str(source["paper_id"])
+            for source in state.get("sources", [])
+            if source.get("paper_id")
+        ]
 
         if active_paper_ids:
             pieces.append(" ".join(active_paper_ids[:3]))
@@ -812,15 +782,19 @@ class AgenticRAGNodes:
         generation = await self.llm_provider.generate(prompt=prompt, settings=settings)
         return parse_json_object(generation.response_text)
 
+    async def _emit_status(self, text: str) -> None:
+        if self.status_callback is not None:
+            await self.status_callback(text)
+
     def _context_from_state(self, data: dict[str, Any]):
         from rag.service.orchestration.context_builder import (
-            KnowledgeContext,
             Citation,
             PaperMetadata,
+            RetrievalContext,
             Source,
         )
 
-        return KnowledgeContext(
+        return RetrievalContext(
             context_prompt=str(data.get("context_prompt", "")),
             citations=[
                 Citation(
@@ -830,9 +804,7 @@ class AgenticRAGNodes:
                         paper_id=str(citation["paper_id"]),
                         arxiv_id=str(citation["arxiv_id"]),
                         title=str(citation["title"]),
-                        authors=[
-                            str(value) for value in citation.get("authors", [])
-                        ],
+                        authors=[str(value) for value in citation.get("authors", [])],
                         categories=[
                             str(value) for value in citation.get("categories", [])
                         ],
@@ -844,6 +816,9 @@ class AgenticRAGNodes:
                     chunk_index=int(citation["chunk_index"]),
                     score=citation.get("score"),
                     highlights=[str(value) for value in citation.get("highlights", [])],
+                    source_storage_key=citation.get("source_storage_key"),
+                    start_char=citation.get("start_char"),
+                    end_char=citation.get("end_char"),
                 )
                 for citation in data.get("citations", [])
             ],
@@ -868,27 +843,113 @@ class AgenticRAGNodes:
                 )
                 for source in data.get("sources", [])
             ],
-            chunk_count=int(data.get("chunk_count", 0)),
-            context_char_count=int(data.get("context_char_count", 0)),
+            context_size=int(
+                data.get("context_size", data.get("context_char_count", 0))
+            ),
         )
+
+    def _format_conversation_context(
+        self,
+        messages: list[dict[str, Any]],
+        max_messages: int = 8,
+        max_chars: int = 2_500,
+    ) -> str:
+        if not messages:
+            return "No previous conversation."
+
+        lines: list[str] = []
+
+        for message in messages[-max_messages:]:
+            role = str(message.get("role", "message")).title()
+            content = " ".join(str(message.get("content", "")).split())
+
+            if not content:
+                continue
+
+            lines.append(f"{role}: {self._truncate(content, 500)}")
+
+        text = "\n".join(lines).strip()
+
+        return self._truncate(text, max_chars) if text else "No previous conversation."
+
+    def _inject_conversation_context(
+        self,
+        prompt: str,
+        conversation_context: list[dict[str, Any]],
+    ) -> str:
+        formatted_context = self._format_conversation_context(conversation_context)
+
+        if formatted_context == "No previous conversation.":
+            return prompt
+
+        insertion = "# Recent Conversation Context\n" f"{formatted_context}\n\n"
+        marker = "# User Question"
+
+        if marker in prompt:
+            return prompt.replace(marker, insertion + marker, 1)
+
+        return f"{insertion}{prompt}"
+
+    def _build_direct_answer_prompt(self, state: AgenticRAGState) -> str:
+        conversation_context = self._format_conversation_context(
+            state.get("conversation_context", [])
+        )
+        query = state.get("resolved_query") or state["safe_query"]
+
+        return "\n".join(
+            [
+                "# Role",
+                "You are an arXiv paper research assistant.",
+                "",
+                "# Rules",
+                (
+                    "- Answer the current user message using only the recent "
+                    "conversation context."
+                ),
+                "- If the conversation context is insufficient, say so briefly.",
+                "- Do not invent paper evidence or citations.",
+                "",
+                "# Recent Conversation Context",
+                conversation_context,
+                "",
+                "# Current User Message",
+                query,
+                "",
+                "# Answer",
+            ]
+        )
+
+    def _verify_citations(self, state: AgenticRAGState) -> dict[str, Any]:
+        answer = state.get("answer", "")
+        valid_numbers = {
+            int(citation["source_number"]) for citation in state.get("citations", [])
+        }
+        cited_numbers = sorted(
+            {
+                int(match)
+                for match in re.findall(r"\[Source\s+(\d+)\]", answer, re.IGNORECASE)
+            }
+        )
+        invalid_numbers = [
+            source_number
+            for source_number in cited_numbers
+            if source_number not in valid_numbers
+        ]
+        missing_citations = bool(state.get("citations")) and not cited_numbers
+
+        return {
+            "valid": not invalid_numbers and not missing_citations,
+            "cited_source_numbers": cited_numbers,
+            "invalid_source_numbers": invalid_numbers,
+            "missing_citations": missing_citations,
+            "available_source_numbers": sorted(valid_numbers),
+        }
 
     def _parse_date(self, value: Any) -> date | None:
         if value is None or isinstance(value, date):
             return value
 
         return date.fromisoformat(str(value))
-
-    def _source_summary(self, sources: list[dict[str, Any]]) -> str | None:
-        if not sources:
-            return None
-
-        titles = [
-            f"{source.get('title', 'Unknown title')} ({source.get('arxiv_id', 'unknown arXiv ID')})"
-            for source in sources[:5]
-        ]
-        remaining = len(sources) - len(titles)
-        suffix = f", and {remaining} more" if remaining > 0 else ""
-        return "; ".join(titles) + suffix
 
     def _truncate(self, text: str, max_chars: int) -> str:
         if len(text) <= max_chars:

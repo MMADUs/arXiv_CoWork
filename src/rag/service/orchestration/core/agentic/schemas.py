@@ -18,6 +18,9 @@ CritiqueVerdict = Literal["pass", "repair", "fail"]
 class AgenticRAGRequest:
     question: str
     thread_id: str | None = None
+    conversation_id: str | None = None
+    current_message_id: str | None = None
+    conversation_context: list[dict[str, Any]] = field(default_factory=list)
     retrieval_mode: Literal["bm25", "vector", "hybrid"] | None = None
     top_k: int | None = None
     candidate_pool_size: int | None = None
@@ -37,16 +40,12 @@ class AgenticRAGRequest:
 @dataclass(frozen=True, slots=True)
 class AgenticRAGMetadata:
     thread_id: str
-    retrieval_attempts: int
-    answer_repair_attempts: int
-    reasoning_steps: list[dict[str, Any]]
+    conversation_id: str | None
+    current_message_id: str | None
+    resolved_query: str
+    retrieval_used: bool
     guardrail: dict[str, Any]
-    scope: dict[str, Any]
-    followup: dict[str, Any]
-    retrieval_plan: dict[str, Any]
     evidence_grade: dict[str, Any]
-    citation_verification: dict[str, Any]
-    answer_critique: dict[str, Any]
     rewritten_query: str | None
     answer_model: str | None
     answer_usage: LLMUsageMetadata | None
@@ -55,16 +54,12 @@ class AgenticRAGMetadata:
     def to_dict(self) -> dict[str, Any]:
         return {
             "thread_id": self.thread_id,
-            "retrieval_attempts": self.retrieval_attempts,
-            "answer_repair_attempts": self.answer_repair_attempts,
-            "reasoning_steps": self.reasoning_steps,
+            "conversation_id": self.conversation_id,
+            "current_message_id": self.current_message_id,
+            "resolved_query": self.resolved_query,
+            "retrieval_used": self.retrieval_used,
             "guardrail": self.guardrail,
-            "scope": self.scope,
-            "followup": self.followup,
-            "retrieval_plan": self.retrieval_plan,
             "evidence_grade": self.evidence_grade,
-            "citation_verification": self.citation_verification,
-            "answer_critique": self.answer_critique,
             "rewritten_query": self.rewritten_query,
             "answer_model": self.answer_model,
             "answer_usage": (

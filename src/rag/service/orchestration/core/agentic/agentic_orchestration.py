@@ -1,6 +1,7 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -52,7 +53,11 @@ class AgenticRAGOrchestrator:
         )
         self.graph = build_agentic_rag_graph(self.nodes, checkpointer=checkpointer)
 
-    async def answer(self, request: AgenticRAGRequest) -> AgenticRAGResult:
+    async def answer(
+        self,
+        request: AgenticRAGRequest,
+        status_callback: Callable[[str], Awaitable[None]] | None = None,
+    ) -> AgenticRAGResult:
         thread_id = request.thread_id or str(uuid4())
 
         input_state = self._make_input_state(request, thread_id)
@@ -62,7 +67,12 @@ class AgenticRAGOrchestrator:
             },
         }
 
-        final_state = await self.graph.ainvoke(input_state, config=config)
+        self.nodes.status_callback = status_callback
+        
+        try:
+            final_state = await self.graph.ainvoke(input_state, config=config)
+        finally:
+            self.nodes.status_callback = None
 
         return self._make_result(final_state)
 
@@ -73,7 +83,11 @@ class AgenticRAGOrchestrator:
     ) -> AgenticRAGState:
         return {
             "thread_id": thread_id,
+            "conversation_id": request.conversation_id,
+            "current_message_id": request.current_message_id,
             "question": request.question,
+            "resolved_query": request.question,
+            "conversation_context": request.conversation_context,
             "retrieval_mode": request.retrieval_mode or "hybrid",
             "top_k": request.top_k or self.settings.default_top_k,
             "candidate_pool_size": (
@@ -97,6 +111,7 @@ class AgenticRAGOrchestrator:
             "max_retrieval_attempts": self.settings.max_retrieval_attempts,
             "max_answer_repair_attempts": self.settings.max_answer_repair_attempts,
             "enable_query_rewrite": self.settings.enable_query_rewrite,
+            "enable_answer_critique": self.settings.enable_answer_critique,
             "enable_answer_repair": self.settings.enable_answer_repair,
             "enable_post_answer_retrieval": (
                 self.settings.enable_post_answer_retrieval
@@ -121,16 +136,16 @@ class AgenticRAGOrchestrator:
             ],
             metadata=AgenticRAGMetadata(
                 thread_id=state["thread_id"],
-                retrieval_attempts=int(state.get("retrieval_attempts", 0)),
-                answer_repair_attempts=int(state.get("answer_repair_attempts", 0)),
-                reasoning_steps=state.get("reasoning_steps", []),
+                conversation_id=state.get("conversation_id"),
+                current_message_id=state.get("current_message_id"),
+                resolved_query=(
+                    state.get("resolved_query")
+                    or state.get("safe_query")
+                    or state.get("question", "")
+                ),
+                retrieval_used=bool(state.get("citations", [])),
                 guardrail=state.get("guardrail", {}),
-                scope=state.get("scope", {}),
-                followup=state.get("followup", {}),
-                retrieval_plan=state.get("retrieval_plan", {}),
                 evidence_grade=state.get("evidence_grade", {}),
-                citation_verification=state.get("citation_verification", {}),
-                answer_critique=state.get("answer_critique", {}),
                 rewritten_query=state.get("rewritten_query"),
                 answer_model=metadata.get("answer_model"),
                 answer_usage=self._usage_from_state(metadata.get("answer_usage")),
@@ -173,6 +188,9 @@ class AgenticRAGOrchestrator:
             chunk_index=int(data["chunk_index"]),
             score=data.get("score"),
             highlights=[str(value) for value in data.get("highlights", [])],
+            source_storage_key=data.get("source_storage_key"),
+            start_char=data.get("start_char"),
+            end_char=data.get("end_char"),
         )
 
     def _source_from_state(self, data: dict[str, Any]) -> Source:

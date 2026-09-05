@@ -13,21 +13,26 @@ AgenticRoute = Literal[
     "use_active_context",
     "no_context_fallback",
     "rewrite_query",
-    "answer",
-    "repair_answer",
+    "answer_generator",
+    "answer_repair",
     "targeted_retrieval",
     "save_thread_state",
     "blocked",
+    "answer_critic",
 ]
 
 
 class AgenticRAGState(TypedDict, total=False):
     thread_id: str
+    conversation_id: str | None
+    current_message_id: str | None
     question: str
     safe_query: str
     current_query: str
     original_query: str
+    resolved_query: str
     rewritten_query: str | None
+    conversation_context: list[dict[str, Any]]
 
     retrieval_mode: Literal["bm25", "vector", "hybrid"]
     top_k: int
@@ -44,6 +49,10 @@ class AgenticRAGState(TypedDict, total=False):
     include_highlights: bool
     fuzziness: str | None
 
+    is_safe: bool
+    is_in_scope: bool
+    is_followup: bool
+    requires_retrieval: bool
     blocked: bool
     answer: str
     guardrail: dict[str, Any]
@@ -51,15 +60,11 @@ class AgenticRAGState(TypedDict, total=False):
     followup: dict[str, Any]
     retrieval_plan: dict[str, Any]
     evidence_grade: dict[str, Any]
-    citation_verification: dict[str, Any]
     answer_critique: dict[str, Any]
 
     search_hits: list[dict[str, Any]]
     reranked_hits: list[dict[str, Any]]
     active_hits: list[dict[str, Any]]
-    active_chunk_ids: list[str]
-    active_paper_ids: list[str]
-    active_context_summary: str | None
     context: dict[str, Any]
     citations: list[dict[str, Any]]
     sources: list[dict[str, Any]]
@@ -69,9 +74,9 @@ class AgenticRAGState(TypedDict, total=False):
     max_retrieval_attempts: int
     max_answer_repair_attempts: int
     enable_query_rewrite: bool
+    enable_answer_critique: bool
     enable_answer_repair: bool
     enable_post_answer_retrieval: bool
-    reasoning_steps: list[dict[str, Any]]
     errors: list[str]
     metadata: dict[str, Any]
 
@@ -100,13 +105,3 @@ def hits_from_state(values: list[dict[str, Any]]) -> list[SearchHit]:
 
 def hits_to_state(hits: list[SearchHit]) -> list[dict[str, Any]]:
     return [hit_to_state(hit) for hit in hits]
-
-
-def append_step(
-    state: AgenticRAGState,
-    name: str,
-    detail: dict[str, Any],
-) -> list[dict[str, Any]]:
-    steps = list(state.get("reasoning_steps", []))
-    steps.append({"step": name, **detail})
-    return steps
