@@ -10,14 +10,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from rag import __version__
 
 
-class RedisSettings(BaseModel):
-    url: str = "redis://localhost:6379/0"
-    key_prefix: str = "rag_answer"
-
-    cache_ttl_seconds: int = Field(default=21600, ge=1)
-    timeout_seconds: float = Field(default=2.0, gt=0)
-
-
 class AgenticRAGSettings(BaseModel):
     enabled: bool = True
     max_retrieval_attempts: int = Field(default=2, ge=1, le=5)
@@ -191,8 +183,9 @@ class Settings(BaseSettings):
         default_factory=TransformersRerankerSettings
     )
     llm_settings: OllamaLLMSettings = Field(default_factory=OllamaLLMSettings)
-    redis_settings: RedisSettings = Field(default_factory=RedisSettings)
     celery_settings: CelerySettings = Field(default_factory=CelerySettings)
+
+    # orchestration settings
     agentic_rag_settings: AgenticRAGSettings = Field(default_factory=AgenticRAGSettings)
 
 

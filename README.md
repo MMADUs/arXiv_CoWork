@@ -6,6 +6,40 @@
 pip install -e .
 ```
 
+## Running infrastructure
+
+Starting docker containers
+
+```powershell
+docker compose up -d
+```
+
+Stopping docker containers
+
+```powershell
+docker compose down -d
+```
+
+## Running local inference (LLM & Embedding)
+
+Starting ollama instance
+
+```powershell
+ollama serve
+```
+
+Check all registered models
+
+```powershell
+ollama list
+```
+
+Test the models from CLI
+
+```
+ollama run <model_name>
+```
+
 ## Database migration:
 
 migration guide is available at /alembic/migrations.md

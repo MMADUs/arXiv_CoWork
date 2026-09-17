@@ -16,7 +16,6 @@ dependencies = [
   "docling>=2.43",
   "PyMuPDF>=1.24",
   "elasticsearch>=8",
-  "redis>=5.0",
   "celery>=5.4",
   "langgraph>=1.0",
 ]
