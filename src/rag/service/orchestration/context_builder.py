@@ -48,16 +48,26 @@ class Citation:
     chunk_index: int
     score: float | None
     highlights: list[str]
+    source_storage_key: str | None = None
+    start_char: int | None = None
+    end_char: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_number": self.source_number,
+            "citation_index": self.source_number,
             "chunk_id": self.chunk_id,
+            "document_id": self.paper_metadata.paper_id,
+            "document_version": None,
             **self.paper_metadata.to_dict(),
             "section_title": self.section_title,
             "chunk_index": self.chunk_index,
+            "page": None,
             "score": self.score,
             "highlights": self.highlights,
+            "source_storage_key": self.source_storage_key,
+            "start_char": self.start_char,
+            "end_char": self.end_char,
         }
 
 
@@ -203,6 +213,11 @@ class ContextBuilder:
             chunk_index=self._int_value(source, "chunk_index"),
             score=hit.score,
             highlights=hit.highlights,
+            source_storage_key=self._optional_string_value(
+                source, "source_storage_key"
+            ),
+            start_char=self._optional_int_value(source, "start_char"),
+            end_char=self._optional_int_value(source, "end_char"),
         )
 
     def _make_source_block(
@@ -301,6 +316,10 @@ class ContextBuilder:
     def _int_value(self, source: dict[str, Any], key: str) -> int:
         value = source.get(key)
         return 0 if value is None else int(value)
+
+    def _optional_int_value(self, source: dict[str, Any], key: str) -> int | None:
+        value = source.get(key)
+        return None if value is None else int(value)
 
     def _string_list(self, values: Any) -> list[str]:
         return [str(value) for value in values] if isinstance(values, list) else []

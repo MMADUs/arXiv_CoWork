@@ -131,6 +131,30 @@ class ConversationRoomService:
             total_messages=total,
         )
 
+    def list_recent_messages(
+        self,
+        room_id: UUID,
+        limit: int = 8,
+    ) -> ConversationMessagePage:
+        """
+        List the latest conversation messages in chronological order.
+        """
+        if limit < 1:
+            raise ConversationValidationError("limit must be greater than 0")
+
+        first_page = self._list_messages(
+            room_id=room_id,
+            limit=1,
+            offset=0,
+        )
+        offset = max(first_page.total - limit, 0)
+
+        return self._list_messages(
+            room_id=room_id,
+            limit=limit,
+            offset=offset,
+        )
+
     def update_conversation_room_title(
         self,
         room_id: UUID,
