@@ -99,7 +99,7 @@ class AgenticRAGNodes:
         if not guardrail.allowed:
             return {
                 **fresh_state,
-                "answer": guardrail.response or "Sorry, I can't process that request.",
+                "answer": self._blocked_response(),
             }
 
         safe_query = (
@@ -159,20 +159,14 @@ class AgenticRAGNodes:
         answer = ""
 
         if scope["decision"] == "direct_response":
-            answer = str(
-                scope.get("response")
-                or (
-                    "I can answer questions about indexed arXiv papers and cite "
-                    "the retrieved sources."
-                )
+            answer = self._safe_direct_response(
+                scope.get("response"),
+                fallback=self._direct_response(),
             )
         elif scope["decision"] == "out_of_scope":
-            answer = str(
-                scope.get("response")
-                or (
-                    "I can help with indexed arXiv paper questions, but that "
-                    "request is outside my current scope."
-                )
+            answer = self._safe_direct_response(
+                scope.get("response"),
+                fallback=self._out_of_scope_response(),
             )
 
         return {
@@ -376,6 +370,52 @@ class AgenticRAGNodes:
         return {
             "answer": "The indexed sources are insufficient to answer this question.",
         }
+
+    def _blocked_response(self) -> str:
+        return (
+            "Sorry, I can't process that request. I can help with questions "
+            "about indexed arXiv papers."
+        )
+
+    def _direct_response(self) -> str:
+        return (
+            "Hi, I am your arXiv research assistant. Ask me about indexed "
+            "papers, methods, datasets, results, citations, or comparisons, "
+            "and I will answer from the available paper context."
+        )
+
+    def _out_of_scope_response(self) -> str:
+        return (
+            "I can help with indexed arXiv paper questions, but that request is "
+            "outside my current scope."
+        )
+
+    def _safe_direct_response(self, value: Any, fallback: str) -> str:
+        if not isinstance(value, str):
+            return fallback
+
+        response = " ".join(value.split())
+
+        if not response:
+            return fallback
+
+        lowered = response.lower()
+        blocked_terms = (
+            "classifier",
+            "guardrail",
+            "scope router",
+            "router",
+            "system prompt",
+            "developer prompt",
+            "hidden prompt",
+            "policy",
+            "workflow",
+        )
+
+        if any(term in lowered for term in blocked_terms):
+            return fallback
+
+        return response
 
     async def answer_generator(self, state: AgenticRAGState) -> dict[str, Any]:
         await self._emit_status("Thinking...")

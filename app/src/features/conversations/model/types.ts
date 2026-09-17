@@ -9,6 +9,15 @@ export type MessageStatus =
 export type ConversationRoom = {
   room_id: string;
   title: string | null;
+  metadata: {
+    total_input_tokens?: number;
+    total_output_tokens?: number;
+    total_tokens?: number;
+    min_latency_ms?: number | null;
+    max_latency_ms?: number | null;
+    avg_latency_ms?: number | null;
+    [key: string]: unknown;
+  };
   created_at: string;
   updated_at: string;
 };
@@ -25,14 +34,21 @@ export type ConversationRoomList = {
 
 export type Citation = {
   source_number?: number;
+  citation_index?: number;
+  document_id?: string;
+  document_version?: string | null;
   chunk_id?: string;
   paper_id?: string;
   arxiv_id?: string;
   title?: string;
+  page?: number | null;
   section_title?: string | null;
   pdf_url?: string;
   chunk_index?: number;
   score?: number | null;
+  source_storage_key?: string | null;
+  start_char?: number | null;
+  end_char?: number | null;
   highlights?: string[];
 };
 
@@ -61,11 +77,15 @@ export type ConversationMessage = {
     sources?: SourceBlock[];
     model?: string;
     provider?: string;
+    reasoning_status?: string;
     output_limited?: boolean;
-    usage?: {
-      completion_tokens?: number;
-      [key: string]: unknown;
-    };
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    latency_ms?: number | null;
+    prefill_duration_ms?: number | null;
+    decode_duration_ms?: number | null;
+    model_load_duration_ms?: number | null;
     [key: string]: unknown;
   };
   completed_at: string | null;

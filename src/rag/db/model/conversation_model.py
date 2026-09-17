@@ -54,6 +54,12 @@ class ConversationRoomModel(Base):
         default=uuid.uuid4,
     )
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    room_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        default=dict,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

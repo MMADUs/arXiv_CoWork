@@ -329,9 +329,9 @@ class OllamaLLMProvider(LLMProvider):
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
-            prompt_eval_duration_ms=self._ns_to_ms(data.get("prompt_eval_duration")),
-            eval_duration_ms=self._ns_to_ms(data.get("eval_duration")),
-            load_duration_ms=self._ns_to_ms(data.get("load_duration")),
+            prefill_duration_ms=self._ns_to_ms(data.get("prompt_eval_duration")),
+            decode_duration_ms=self._ns_to_ms(data.get("eval_duration")),
+            model_load_duration_ms=self._ns_to_ms(data.get("load_duration")),
             latency_ms=self._ns_to_ms(data.get("total_duration")),
         )
 

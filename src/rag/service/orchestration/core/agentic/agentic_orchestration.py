@@ -68,7 +68,7 @@ class AgenticRAGOrchestrator:
         }
 
         self.nodes.status_callback = status_callback
-        
+
         try:
             final_state = await self.graph.ainvoke(input_state, config=config)
         finally:
@@ -217,8 +217,8 @@ class AgenticRAGOrchestrator:
             prompt_tokens=int(value.get("prompt_tokens", 0)),
             completion_tokens=int(value.get("completion_tokens", 0)),
             total_tokens=int(value.get("total_tokens", 0)),
-            prompt_eval_duration_ms=float(value.get("prompt_eval_duration_ms", 0.0)),
-            eval_duration_ms=float(value.get("eval_duration_ms", 0.0)),
-            load_duration_ms=float(value.get("load_duration_ms", 0.0)),
+            prefill_duration_ms=float(value.get("prompt_eval_duration_ms", 0.0)),
+            decode_duration_ms=float(value.get("eval_duration_ms", 0.0)),
+            model_load_duration_ms=float(value.get("load_duration_ms", 0.0)),
             latency_ms=float(value.get("latency_ms", 0.0)),
         )

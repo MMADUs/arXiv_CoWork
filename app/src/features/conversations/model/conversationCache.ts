@@ -124,6 +124,24 @@ export function applyStreamEvent({
       };
     }
 
+    if (streamEvent.event === "assistant.status") {
+      return {
+        ...detail,
+        messages: detail.messages.map((message) =>
+          message.message_id === assistantMessageId ||
+          message.message_id === assistantTempId
+            ? {
+                ...message,
+                metadata: {
+                  ...message.metadata,
+                  reasoning_status: streamEvent.data.text,
+                },
+              }
+            : message,
+        ),
+      };
+    }
+
     if (streamEvent.event === "assistant.completed") {
       return replaceMessage(detail, assistantMessageId, streamEvent.data);
     }

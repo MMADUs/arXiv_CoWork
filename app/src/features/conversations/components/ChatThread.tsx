@@ -83,9 +83,9 @@ function ChatMessage({
   onSelect: () => void;
 }) {
   const isUser = message.role === "user";
-  const outputLimited =
-    message.metadata.output_limited === true ||
-    message.metadata.usage?.completion_tokens === 1024;
+  const reasoningStatus = message.metadata.reasoning_status;
+  const outputLimited = message.metadata.output_limited === true;
+  const latency = formatDuration(message.metadata.latency_ms);
 
   return (
     <article
@@ -141,10 +141,13 @@ function ChatMessage({
             </ReactMarkdown>
           </div>
         ) : message.status === "generating" ? (
-          <div className="typing-indicator">
-            <span />
-            <span />
-            <span />
+          <div className="thinking-state">
+            <div className="typing-indicator">
+              <span />
+              <span />
+              <span />
+            </div>
+            {reasoningStatus ? <span>{reasoningStatus}</span> : null}
           </div>
         ) : null}
         {message.status === "interrupted" ? (
@@ -158,10 +161,25 @@ function ChatMessage({
             Output limit reached
           </div>
         ) : null}
+        {!isUser && latency ? (
+          <div className="message-state">Latency {latency}</div>
+        ) : null}
         {message.error ? (
           <p className="message-error">{message.error}</p>
         ) : null}
       </div>
     </article>
   );
+}
+
+function formatDuration(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  if (value < 1000) {
+    return `${Math.round(value)} ms`;
+  }
+
+  return `${(value / 1000).toFixed(1)}s`;
 }

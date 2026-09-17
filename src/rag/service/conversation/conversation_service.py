@@ -26,6 +26,7 @@ class ConversationRoom:
     title: str | None
     created_at: datetime
     updated_at: datetime
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +78,10 @@ class ConversationRoomService:
         """
         Create new conversation room with the given room title
         """
-        room = self.repository.create_room(title=title)
+        room = self.repository.create_room(
+            title=title,
+            metadata=self._empty_room_usage_metadata(),
+        )
         self.session.commit()
         self.session.refresh(room)
         return self._room_from_model(room)
@@ -171,6 +175,25 @@ class ConversationRoomService:
         self.repository.update_room_title(room=room, title=new_title)
         self.session.commit()
         self.session.refresh(room)
+        return self._room_from_model(room)
+
+    def refresh_conversation_room_metadata(self, room_id: UUID) -> ConversationRoom:
+        """
+        Recompute aggregate room metadata from persisted message metadata.
+        """
+        room = self.repository.get_room_by_id(room_id)
+
+        if room is None:
+            raise ConversationNotFoundError(f"Conversation room not found: {room_id}")
+
+        messages = self.repository.list_all_messages(room_id)
+        metadata = self._build_room_usage_metadata(
+            [self._message_from_model(message) for message in messages]
+        )
+        self.repository.update_room_metadata(room=room, metadata=metadata)
+        self.session.commit()
+        self.session.refresh(room)
+
         return self._room_from_model(room)
 
     def delete_conversation_room(self, room_id: UUID) -> None:
@@ -450,6 +473,7 @@ class ConversationRoomService:
         return ConversationRoom(
             room_id=room.id,
             title=room.title,
+            metadata=dict(room.room_metadata or {}),
             created_at=room.created_at,
             updated_at=room.updated_at,
         )
@@ -470,3 +494,106 @@ class ConversationRoomService:
             created_at=message.created_at,
             updated_at=message.updated_at,
         )
+
+    def _build_room_usage_metadata(
+        self,
+        messages: list[ConversationMessage],
+    ) -> dict[str, Any]:
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_tokens = 0
+        latencies: list[float] = []
+
+        for message in messages:
+            if (
+                message.role != ConversationMessageRole.ASSISTANT.value
+                or message.status != ConversationMessageStatus.COMPLETED.value
+            ):
+                continue
+
+            metadata = message.metadata or {}
+            total_input_tokens += self._int_metadata_value(
+                metadata,
+                "input_tokens",
+                fallback_path=("usage", "prompt_tokens"),
+            )
+            total_output_tokens += self._int_metadata_value(
+                metadata,
+                "output_tokens",
+                fallback_path=("usage", "completion_tokens"),
+            )
+            total_tokens += self._int_metadata_value(
+                metadata,
+                "total_tokens",
+                fallback_path=("usage", "total_tokens"),
+            )
+
+            latency_ms = self._float_metadata_value(metadata, "latency_ms")
+            if latency_ms is not None:
+                latencies.append(latency_ms)
+
+        metadata = self._empty_room_usage_metadata()
+        metadata.update(
+            {
+                "total_input_tokens": total_input_tokens,
+                "total_output_tokens": total_output_tokens,
+                "total_tokens": total_tokens,
+            }
+        )
+
+        if latencies:
+            metadata.update(
+                {
+                    "min_latency_ms": round(min(latencies), 2),
+                    "max_latency_ms": round(max(latencies), 2),
+                    "avg_latency_ms": round(sum(latencies) / len(latencies), 2),
+                }
+            )
+
+        return metadata
+
+    def _empty_room_usage_metadata(self) -> dict[str, Any]:
+        return {
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+            "min_latency_ms": None,
+            "max_latency_ms": None,
+            "avg_latency_ms": None,
+        }
+
+    def _int_metadata_value(
+        self,
+        metadata: dict[str, Any],
+        key: str,
+        fallback_path: tuple[str, str] | None = None,
+    ) -> int:
+        value = metadata.get(key)
+
+        if value is None and fallback_path is not None:
+            parent = metadata.get(fallback_path[0])
+            if isinstance(parent, dict):
+                value = parent.get(fallback_path[1])
+
+        if isinstance(value, bool) or value is None:
+            return 0
+
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def _float_metadata_value(
+        self,
+        metadata: dict[str, Any],
+        key: str,
+    ) -> float | None:
+        value = metadata.get(key)
+
+        if isinstance(value, bool) or value is None:
+            return None
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None

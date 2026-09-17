@@ -482,6 +482,16 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.room-stats {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .eyebrow {
   margin: 0 0 3px;
   color: var(--accent-text);
@@ -694,6 +704,18 @@ a:focus-visible {
   display: flex;
   gap: 5px;
   padding: 8px 0;
+}
+
+.thinking-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.thinking-state .typing-indicator {
+  padding: 0;
 }
 
 .typing-indicator span {

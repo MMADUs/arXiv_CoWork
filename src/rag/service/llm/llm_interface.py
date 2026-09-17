@@ -40,13 +40,13 @@ class LLMUsageMetadata:
     Response schema for LLM usage metadata after text generation
     """
 
-    prompt_tokens: int  # did retrieved context fit in num_ctx?
-    completion_tokens: int  # output volume
+    prompt_tokens: int
+    completion_tokens: int
     total_tokens: int  # prompt_tokens + completion_tokens
-    prompt_eval_duration_ms: float  # context-processing bottleneck
-    eval_duration_ms: float  # generation-speed bottleneck
-    load_duration_ms: float  # keep_alive misconfiguration signal
-    latency_ms: float  # top-line total
+    prefill_duration_ms: float
+    decode_duration_ms: float
+    model_load_duration_ms: float
+    latency_ms: float  # from input to finish generating
 
 
 @dataclass(frozen=True)

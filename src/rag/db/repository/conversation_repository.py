@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -24,8 +25,15 @@ class ConversationRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def create_room(self, title: str | None = None) -> ConversationRoomModel:
-        room = ConversationRoomModel(title=self._clean_title(title))
+    def create_room(
+        self,
+        title: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ConversationRoomModel:
+        room = ConversationRoomModel(
+            title=self._clean_title(title),
+            room_metadata=dict(metadata or {}),
+        )
         self.session.add(room)
         self.session.flush()
         return room
@@ -60,6 +68,15 @@ class ConversationRepository:
         title: str | None,
     ) -> ConversationRoomModel:
         room.title = self._clean_title(title)
+        room.updated_at = datetime.now(timezone.utc)
+        return room
+
+    def update_room_metadata(
+        self,
+        room: ConversationRoomModel,
+        metadata: dict[str, Any],
+    ) -> ConversationRoomModel:
+        room.room_metadata = dict(metadata)
         room.updated_at = datetime.now(timezone.utc)
         return room
 
@@ -169,6 +186,15 @@ class ConversationRepository:
         total = self.session.scalar(total_statement) or 0
 
         return messages, total
+
+    def list_all_messages(self, room_id: UUID) -> list[ConversationMessageModel]:
+        statement = (
+            select(ConversationMessageModel)
+            .where(ConversationMessageModel.room_id == room_id)
+            .order_by(ConversationMessageModel.created_at.asc())
+        )
+
+        return list(self.session.scalars(statement))
 
     def _clean_title(self, title: str | None) -> str | None:
         if title is None:

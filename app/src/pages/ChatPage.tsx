@@ -20,6 +20,7 @@ export function ChatPage() {
       navigate(`/chat/${createdRoomId}`, { replace: true }),
     onRoomDeleted: () => navigate("/chat", { replace: true }),
   });
+  const roomStats = formatRoomStats(conversation.activeRoom?.metadata);
 
   function selectRoom(selectedRoomId: string) {
     conversation.setSelectedMessageId(null);
@@ -77,6 +78,7 @@ export function ChatPage() {
               <h1>
                 {conversation.activeRoom?.title || "New research conversation"}
               </h1>
+              {roomStats ? <p className="room-stats">{roomStats}</p> : null}
             </div>
           </div>
           <div className="topbar-actions">
@@ -125,4 +127,42 @@ export function ChatPage() {
       />
     </main>
   );
+}
+
+function formatRoomStats(metadata?: Record<string, unknown>) {
+  if (!metadata) return null;
+
+  const totalTokens = numberValue(metadata.total_tokens);
+  const avgLatencyMs = numberValue(metadata.avg_latency_ms);
+  const parts: string[] = [];
+
+  if (totalTokens && totalTokens > 0) {
+    parts.push(`${formatTokens(totalTokens)} tokens`);
+  }
+
+  if (avgLatencyMs && avgLatencyMs > 0) {
+    parts.push(`avg ${formatDuration(avgLatencyMs)}`);
+  }
+
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatTokens(value: number) {
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(1)}k`;
+  }
+
+  return String(value);
+}
+
+function formatDuration(value: number) {
+  if (value < 1000) {
+    return `${Math.round(value)} ms`;
+  }
+
+  return `${(value / 1000).toFixed(1)}s`;
 }
