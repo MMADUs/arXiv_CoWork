@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ChatThread } from "../features/conversations/components/ChatThread";
 import { ConversationSidebar } from "../features/conversations/components/ConversationSidebar";
 import { MessageComposer } from "../features/conversations/components/MessageComposer";
+import { RetrievalSettings } from "../features/conversations/components/RetrievalSettings";
 import { SourcePanel } from "../features/conversations/components/SourcePanel";
 import { useConversationChat } from "../features/conversations/hooks/useConversationChat";
 import { useTheme } from "../shared/theme/useTheme";
@@ -14,6 +15,7 @@ export function ChatPage() {
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
+  const [retrievalSettingsOpen, setRetrievalSettingsOpen] = useState(false);
   const conversation = useConversationChat({
     roomId,
     onRoomCreated: (createdRoomId) =>
@@ -82,6 +84,13 @@ export function ChatPage() {
             </div>
           </div>
           <div className="topbar-actions">
+            <RetrievalSettings
+              config={conversation.retrievalConfig}
+              open={retrievalSettingsOpen}
+              onOpenChange={setRetrievalSettingsOpen}
+              onUpdate={conversation.updateRetrievalConfig}
+              onReset={conversation.resetRetrievalConfig}
+            />
             <button
               className="icon-button source-toggle"
               type="button"
@@ -115,7 +124,11 @@ export function ChatPage() {
           draft={conversation.draft}
           error={conversation.composerError}
           isGenerating={conversation.isGenerating}
+          messageFilters={conversation.messageFilters}
+          messageFiltersActive={conversation.messageFiltersActive}
           onDraftChange={conversation.updateDraft}
+          onMessageFiltersChange={conversation.updateMessageFilters}
+          onClearMessageFilters={conversation.clearMessageFilters}
           onSend={conversation.sendMessage}
           onStop={conversation.stopGeneration}
         />

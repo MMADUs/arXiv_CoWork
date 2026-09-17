@@ -2,6 +2,8 @@ import type {
   ConversationRoom,
   ConversationRoomDetail,
   ConversationRoomList,
+  MessageRetrievalFilters,
+  RetrievalConfig,
   StreamEvent,
 } from "../model/types";
 import { api } from "../../../shared/api/client";
@@ -48,13 +50,15 @@ export async function updateConversationRoom({
 export async function sendConversationMessage({
   roomId,
   content,
-  metadata = {},
+  retrievalConfig,
+  messageFilters,
   signal,
   onEvent,
 }: {
   roomId: string;
   content: string;
-  metadata?: Record<string, unknown>;
+  retrievalConfig: RetrievalConfig;
+  messageFilters?: MessageRetrievalFilters;
   signal?: AbortSignal;
   onEvent: (event: StreamEvent) => void;
 }) {
@@ -63,7 +67,7 @@ export async function sendConversationMessage({
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ content, metadata }),
+    body: JSON.stringify({ content, ...retrievalConfig, ...messageFilters }),
     signal,
   });
 

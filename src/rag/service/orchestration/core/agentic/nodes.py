@@ -472,17 +472,16 @@ class AgenticRAGNodes:
         )
         candidate_pool_size = max(candidate_pool_size, top_k)
 
+        # NOTE: rule-based assumption when user mention
         latest_first = bool(
             state.get("latest_first")
             or any(word in lower_query for word in ["latest", "newest", "recent"])
         )
-        include_highlights = bool(
-            state.get("include_highlights") or retrieval_mode in {"bm25", "hybrid"}
-        )
+        include_highlights = bool(state.get("include_highlights", False))
 
         fuzziness = state.get("fuzziness")
 
-        # NOTE: rule-based assumption when user mention about "title" or "called"
+        # NOTE: rule-based assumption when user mention
         if fuzziness is None and any(
             word in lower_query for word in ["title", "called"]
         ):

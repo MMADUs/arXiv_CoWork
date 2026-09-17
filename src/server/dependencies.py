@@ -6,14 +6,13 @@ from collections.abc import Generator
 from fastapi import Request
 from sqlalchemy.orm import Session
 
-from rag.db.config.interface import DatabaseProvider
+from rag.db.config.db_interface import DatabaseProvider
 from rag.service.arxiv import ArxivClient
-from rag.service.cache.interface import CacheProvider
-from rag.service.elasticsearch.config.client import ElasticsearchClient
-from rag.service.embedding.config.interface import EmbeddingProvider
-from rag.service.llm.interface import LLMProvider
-from rag.service.reranker.interface import RerankerProvider
-from rag.service.storage.interface import StorageProvider
+from rag.service.elasticsearch.config.es_client import ElasticsearchClient
+from rag.service.embedding.config.embedding_interface import EmbeddingProvider
+from rag.service.llm.llm_interface import LLMProvider
+from rag.service.reranker.reranker_interface import RerankerProvider
+from rag.service.storage.storage_interface import StorageProvider
 
 
 def get_db_session(request: Request) -> Generator[Session, None, None]:
@@ -27,17 +26,6 @@ def get_db_session(request: Request) -> Generator[Session, None, None]:
 
     with database.get_session() as session:
         yield session
-
-
-def get_cache_provider(request: Request) -> CacheProvider:
-    cache_provider: CacheProvider | None = getattr(
-        request.app.state, "cache_provider", None
-    )
-
-    if cache_provider is None:
-        raise RuntimeError("cache_provider is not initialized on app.state")
-
-    return cache_provider
 
 
 def get_elasticsearch_client(request: Request) -> ElasticsearchClient:

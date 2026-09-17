@@ -23,10 +23,19 @@ import type {
   ConversationRoom,
   ConversationRoomDetail,
   ConversationRoomList,
+  MessageRetrievalFilterDraft,
+  MessageRetrievalFilters,
 } from "../model/types";
+import { useRetrievalConfig } from "./useRetrievalConfig";
 
 const emptyRooms: ConversationRoom[] = [];
 const emptyMessages: ConversationMessage[] = [];
+const emptyFilterDraft: MessageRetrievalFilterDraft = {
+  paper_id: "",
+  categories: "",
+  published_from: "",
+  published_to: "",
+};
 
 export function useConversationChat({
   roomId,
@@ -42,9 +51,16 @@ export function useConversationChat({
     null,
   );
   const [draft, setDraft] = useState("");
+  const [messageFilters, setMessageFilters] =
+    useState<MessageRetrievalFilterDraft>(emptyFilterDraft);
   const [composerError, setComposerError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeGenerationRef = useRef<ActiveGeneration | null>(null);
+  const {
+    retrievalConfig,
+    updateRetrievalConfig,
+    resetRetrievalConfig,
+  } = useRetrievalConfig();
 
   const roomsQuery = useQuery({
     queryKey: conversationKeys.all,
@@ -113,7 +129,13 @@ export function useConversationChat({
   });
 
   const sendMessageMutation = useMutation({
-    mutationFn: async (content: string) => {
+    mutationFn: async ({
+      content,
+      filters,
+    }: {
+      content: string;
+      filters: MessageRetrievalFilters;
+    }) => {
       let targetRoomId = roomId;
 
       if (!targetRoomId) {
@@ -161,6 +183,8 @@ export function useConversationChat({
       await sendConversationMessage({
         roomId: targetRoomId,
         content,
+        retrievalConfig,
+        messageFilters: filters,
         signal: controller.signal,
         onEvent: (streamEvent) => {
           if (streamEvent.event === "assistant.message.created") {
@@ -187,12 +211,13 @@ export function useConversationChat({
 
       abortControllerRef.current = null;
       activeGenerationRef.current = null;
+      setMessageFilters(emptyFilterDraft);
       await queryClient.invalidateQueries({
         queryKey: conversationKeys.room(targetRoomId),
       });
       await queryClient.invalidateQueries({ queryKey: conversationKeys.all });
     },
-    onError: (error, content) => {
+    onError: (error, variables) => {
       abortControllerRef.current = null;
       const generation = activeGenerationRef.current;
       activeGenerationRef.current = null;
@@ -208,7 +233,7 @@ export function useConversationChat({
       const message =
         error instanceof Error ? error.message : "Message failed.";
       setComposerError(message);
-      setDraft((current) => current || content);
+      setDraft((current) => current || variables.content);
       const targetRoomId = generation?.roomId ?? roomId;
       if (!targetRoomId) return;
 
@@ -236,7 +261,10 @@ export function useConversationChat({
     if (!content.trim() || sendMessageMutation.isPending) return;
     setComposerError(null);
     setDraft("");
-    sendMessageMutation.mutate(content.trim());
+    sendMessageMutation.mutate({
+      content: content.trim(),
+      filters: buildMessageFilters(messageFilters),
+    });
   }
 
   function stopGeneration() {
@@ -252,6 +280,15 @@ export function useConversationChat({
     setComposerError(null);
   }
 
+  function updateMessageFilters(update: Partial<MessageRetrievalFilterDraft>) {
+    setMessageFilters((current) => ({ ...current, ...update }));
+    setComposerError(null);
+  }
+
+  function clearMessageFilters() {
+    setMessageFilters(emptyFilterDraft);
+  }
+
   return {
     rooms,
     roomsLoading: roomsQuery.isLoading,
@@ -264,7 +301,14 @@ export function useConversationChat({
     setSelectedMessageId,
     draft,
     updateDraft,
+    messageFilters,
+    updateMessageFilters,
+    clearMessageFilters,
+    messageFiltersActive: hasMessageFilters(messageFilters),
     composerError,
+    retrievalConfig,
+    updateRetrievalConfig,
+    resetRetrievalConfig,
     isGenerating: sendMessageMutation.isPending,
     sendMessage,
     stopGeneration,
@@ -272,6 +316,31 @@ export function useConversationChat({
     renameRoom: (roomId: string, title: string) =>
       renameRoomMutation.mutateAsync({ roomId, title: title.trim() }),
   };
+}
+
+function buildMessageFilters(
+  filters: MessageRetrievalFilterDraft,
+): MessageRetrievalFilters {
+  const categories = filters.categories
+    .split(",")
+    .map((category) => category.trim())
+    .filter(Boolean);
+
+  return {
+    ...(filters.paper_id.trim() ? { paper_id: filters.paper_id.trim() } : {}),
+    ...(categories.length ? { categories } : {}),
+    ...(filters.published_from ? { published_from: filters.published_from } : {}),
+    ...(filters.published_to ? { published_to: filters.published_to } : {}),
+  };
+}
+
+function hasMessageFilters(filters: MessageRetrievalFilterDraft) {
+  return Boolean(
+    filters.paper_id.trim() ||
+      filters.categories.trim() ||
+      filters.published_from ||
+      filters.published_to,
+  );
 }
 
 function isAbortError(error: unknown) {

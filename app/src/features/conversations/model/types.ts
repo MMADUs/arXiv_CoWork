@@ -6,6 +6,31 @@ export type MessageStatus =
   | "interrupted"
   | "failed";
 
+export type RetrievalMode = "bm25" | "vector" | "hybrid";
+
+export type RetrievalConfig = {
+  retrieval_mode: RetrievalMode;
+  top_k: number;
+  candidate_pool_size: number;
+  use_reranker: boolean;
+  include_highlights: boolean;
+  latest_first: boolean;
+};
+
+export type MessageRetrievalFilters = {
+  paper_id?: string;
+  categories?: string[];
+  published_from?: string;
+  published_to?: string;
+};
+
+export type MessageRetrievalFilterDraft = {
+  paper_id: string;
+  categories: string;
+  published_from: string;
+  published_to: string;
+};
+
 export type ConversationRoom = {
   room_id: string;
   title: string | null;

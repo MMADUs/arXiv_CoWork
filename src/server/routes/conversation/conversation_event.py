@@ -51,6 +51,7 @@ def _room_payload(room) -> dict[str, object]:
     return {
         "room_id": str(room.room_id),
         "title": room.title,
+        "metadata": room.metadata,
         "created_at": room.created_at,
         "updated_at": room.updated_at,
     }
