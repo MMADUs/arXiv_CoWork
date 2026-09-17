@@ -17,17 +17,7 @@ def route_after_scope(state: AgenticRAGState) -> str:
     if decision in {"direct_response", "out_of_scope"}:
         return "save_thread_state"
 
-    return "followup_router"
-
-
-def route_after_followup(state: AgenticRAGState) -> str:
-    if state.get("followup", {}).get("route") == "use_active_context":
-        return "build_context"
-
-    if not bool(state.get("requires_retrieval", True)):
-        return "answer_generator"
-
-    return "prepare_retrieval"
+    return "retrieve"
 
 
 def route_after_evidence(state: AgenticRAGState) -> str:
@@ -46,41 +36,4 @@ def route_after_evidence(state: AgenticRAGState) -> str:
 
 
 def route_after_answer(state: AgenticRAGState) -> str:
-    if bool(state.get("enable_answer_critique", False)):
-        return "answer_critic"
-
-    return "save_thread_state"
-
-
-def route_after_critic(state: AgenticRAGState) -> str:
-    verdict = state.get("answer_critique", {}).get("verdict")
-    retrieval_attempts = int(state.get("retrieval_attempts", 0))
-    max_retrieval_attempts = int(state.get("max_retrieval_attempts", 1))
-    repair_attempts = int(state.get("answer_repair_attempts", 0))
-    max_repair_attempts = int(state.get("max_answer_repair_attempts", 0))
-    repair_enabled = bool(state.get("enable_answer_repair", True))
-    post_answer_retrieval_enabled = bool(
-        state.get("enable_post_answer_retrieval", True)
-    )
-
-    if verdict == "pass":
-        return "save_thread_state"
-
-    if (
-        verdict == "fail"
-        and post_answer_retrieval_enabled
-        and retrieval_attempts < max_retrieval_attempts
-    ):
-        return "targeted_retrieval"
-
-    if (
-        verdict in {"repair", "fail"}
-        and repair_enabled
-        and repair_attempts < max_repair_attempts
-    ):
-        return "answer_repair"
-
-    if verdict == "fail":
-        return "no_context_fallback"
-
     return "save_thread_state"

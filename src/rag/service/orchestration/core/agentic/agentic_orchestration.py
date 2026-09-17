@@ -109,13 +109,7 @@ class AgenticRAGOrchestrator:
             "include_highlights": request.include_highlights,
             "fuzziness": request.fuzziness,
             "max_retrieval_attempts": self.settings.max_retrieval_attempts,
-            "max_answer_repair_attempts": self.settings.max_answer_repair_attempts,
             "enable_query_rewrite": self.settings.enable_query_rewrite,
-            "enable_answer_critique": self.settings.enable_answer_critique,
-            "enable_answer_repair": self.settings.enable_answer_repair,
-            "enable_post_answer_retrieval": (
-                self.settings.enable_post_answer_retrieval
-            ),
         }
 
     def _make_result(self, state: AgenticRAGState) -> AgenticRAGResult:
