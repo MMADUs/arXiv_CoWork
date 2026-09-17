@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 
-SCOPE_ROUTER_PROMPT = """You are a scope router for an arXiv paper RAG system.
+SCOPE_ROUTER_PROMPT = """You are a scope router for an arXiv paper RAG chat.
 Return exactly one compact JSON object. No markdown. No prose.
 
 Route decisions:
@@ -12,8 +12,15 @@ Route decisions:
   capability question that does not need retrieval.
 - out_of_scope: the user asks for something unrelated to indexed arXiv paper understanding.
 
+- Resolve pronouns, ellipses, and references into a standalone information need.
+- If unsure, choose retrieve.
+
 JSON schema: {{"decision":"retrieve|direct_response|out_of_scope","confidence":0.0,
-"reason":"short reason","response":"short response or null"}}
+"reason":"short reason","response":"short response or null",
+"resolved_query":"standalone query"}}
+
+Recent conversation:
+{conversation_context}
 
 User question: {question}
 """
@@ -51,56 +58,4 @@ JSON schema: {{"query":"rewritten search query","reason":"short reason"}}
 Original user question: {question}
 Current query: {current_query}
 Evidence issue: {evidence_reason}
-"""
-
-ANSWER_CRITIC_PROMPT = """You are a strict answer critic for a grounded arXiv paper RAG system.
-Compare the answer against the retrieved sources and citation verification.
-Return exactly one compact JSON object. No markdown. No prose.
-
-Verdicts:
-- pass: answer is grounded, useful, and citations are valid.
-- repair: answer is mostly useful but needs removal, narrowing, or citation fixes.
-- fail: answer is unsupported by the retrieved sources.
-
-Do not reward uncited factual claims. Do not use outside knowledge.
-
-JSON schema: {{"verdict":"pass|repair|fail","groundedness_score":0.0,
-"citation_score":0.0,"completeness_score":0.0,"issues":["short issue"],
-"unsupported_claims":["claim"],"suggested_fix":"short fix or null"}}
-
-User question: {question}
-
-Retrieved context:
-{context}
-
-Answer:
-{answer}
-
-Citation verification:
-{citation_verification}
-"""
-
-ANSWER_REPAIR_PROMPT = """# Role
-You repair answers for a grounded arXiv paper RAG system.
-
-# Rules
-- Use only the retrieved sources.
-- Remove unsupported claims.
-- Every factual sentence must cite at least one source marker like [Source 1].
-- Do not cite invalid sources.
-- If the context is insufficient, say the indexed sources are insufficient.
-
-# User Question
-{question}
-
-# Retrieved Sources
-{context}
-
-# Previous Answer
-{answer}
-
-# Critique
-{critique}
-
-# Repaired Answer
 """
