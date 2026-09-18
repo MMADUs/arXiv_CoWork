@@ -72,6 +72,39 @@ class ConversationMessageResponse(BaseModel):
     updated_at: datetime
 
 
+class ConversationSourcePaperResponse(BaseModel):
+    paper_source_number: int | None = None
+    paper_id: UUID
+    arxiv_id: str | None = None
+    title: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    published_date: str | None = None
+    pdf_url: str | None = None
+    citation_numbers: list[int] = Field(default_factory=list)
+
+
+class ConversationSourceChunkResponse(BaseModel):
+    source_number: int | None = None
+    chunk_id: UUID
+    paper_id: UUID
+    section_title: str | None = None
+    chunk_index: int
+    score: float | None = None
+    highlights: list[str] = Field(default_factory=list)
+    text: str
+    word_count: int
+    start_word: int
+    end_word: int
+    start_char: int
+    end_char: int
+
+
+class ConversationSourceChunksResponse(BaseModel):
+    paper: ConversationSourcePaperResponse
+    chunks: list[ConversationSourceChunkResponse]
+
+
 class ConversationRoomDetailResponse(BaseModel):
     room: ConversationRoomResponse
     message_count: int

@@ -13,7 +13,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from rag.config import get_settings
-from rag.db.model import ConversationMessageStatus
+from rag.db.model import ConversationMessageRole, ConversationMessageStatus
+from rag.db.repository import ChunkRepository
 from rag.service.conversation import (
     ConversationMessage,
     ConversationNotFoundError,
@@ -48,6 +49,9 @@ from server.routes.conversation.conversation_schema import (
     ConversationRoomDetailResponse,
     ConversationRoomListResponse,
     ConversationRoomResponse,
+    ConversationSourceChunkResponse,
+    ConversationSourceChunksResponse,
+    ConversationSourcePaperResponse,
     CreateConversationMessageRequest,
     CreateConversationRoomRequest,
     UpdateConversationMessageRequest,
@@ -217,6 +221,14 @@ async def send_message_route(
         full_text = ""
 
         try:
+            latest_messages = service.list_recent_messages(
+                room_id=room_id,
+                limit=1,
+            ).messages
+            should_auto_title = (
+                room.title is None and len(latest_messages) == 0
+            )
+
             # 1. create user message
             user_message = service.create_user_message(
                 room_id=room_id,
@@ -234,16 +246,6 @@ async def send_message_route(
                 ConversationEventType.ASSISTANT_MESSAGE_CREATED,
                 _message_payload(assistant_message),
             )
-
-            if room.title is None:
-                updated_room = service.update_conversation_room_title(
-                    room_id=room_id,
-                    new_title=_derive_room_title(request.content),
-                )
-                yield _sse_event(
-                    ConversationEventType.CONVERSATION_ROOM_UPDATED,
-                    _room_payload(updated_room),
-                )
 
             # 3. load compact recent history and run agentic RAG
             recent_context = _conversation_context_payload(
@@ -272,10 +274,13 @@ async def send_message_route(
                 reranker_provider=reranker_provider,
             )
 
-            status_queue: asyncio.Queue[str] = asyncio.Queue()
+            stream_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 
             async def emit_status(text: str) -> None:
-                await status_queue.put(text)
+                await stream_queue.put(("status", text))
+
+            async def emit_answer_fragment(text: str) -> None:
+                await stream_queue.put(("fragment", text))
 
             agentic_task = asyncio.create_task(
                 orchestrator.answer(
@@ -313,6 +318,7 @@ async def send_message_route(
                         fuzziness=request.fuzziness,
                     ),
                     status_callback=emit_status,
+                    answer_fragment_callback=emit_answer_fragment,
                 )
             )
 
@@ -322,28 +328,45 @@ async def send_message_route(
                     raise asyncio.CancelledError
 
                 try:
-                    status_text = await asyncio.wait_for(
-                        status_queue.get(),
+                    event_kind, text = await asyncio.wait_for(
+                        stream_queue.get(),
                         timeout=0.25,
                     )
-                    yield _sse_event(
-                        ConversationEventType.ASSISTANT_STATUS,
-                        {"text": status_text},
-                    )
+
+                    if event_kind == "fragment":
+                        full_text += text
+                        yield _sse_event(
+                            ConversationEventType.ASSISTANT_FRAGMENT,
+                            {"text": text},
+                        )
+                    else:
+                        yield _sse_event(
+                            ConversationEventType.ASSISTANT_STATUS,
+                            {"text": text},
+                        )
                 except asyncio.TimeoutError:
                     continue
 
-            while not status_queue.empty():
-                yield _sse_event(
-                    ConversationEventType.ASSISTANT_STATUS,
-                    {"text": status_queue.get_nowait()},
-                )
+            while not stream_queue.empty():
+                event_kind, text = stream_queue.get_nowait()
+
+                if event_kind == "fragment":
+                    full_text += text
+                    yield _sse_event(
+                        ConversationEventType.ASSISTANT_FRAGMENT,
+                        {"text": text},
+                    )
+                else:
+                    yield _sse_event(
+                        ConversationEventType.ASSISTANT_STATUS,
+                        {"text": text},
+                    )
 
             result = await agentic_task
             answer = result.answer.strip() or "I could not generate a response."
-            full_text = answer
 
-            if answer:
+            if not full_text and answer:
+                full_text = answer
                 yield _sse_event(
                     ConversationEventType.ASSISTANT_FRAGMENT,
                     {"text": answer},
@@ -353,6 +376,18 @@ async def send_message_route(
                 raise asyncio.CancelledError
 
             result_metadata = result.metadata.to_dict()
+            if (
+                should_auto_title
+                and service.get_conversation_room(room_id).title is None
+            ):
+                service.update_conversation_room_title(
+                    room_id=room_id,
+                    new_title=(
+                        _safe_room_title(result_metadata.get("conversation_title"))
+                        or _derive_room_title(request.content)
+                    ),
+                )
+
             usage_metadata = _usage_metadata_fields(
                 result_metadata.get("answer_usage")
             )
@@ -497,6 +532,112 @@ def update_message_route(
     )
 
 
+@router.get(
+    "/{room_id}/messages/{message_id}/sources/{paper_id}/chunks",
+    response_model=ConversationSourceChunksResponse,
+)
+def get_message_source_chunks_route(
+    room_id: UUID,
+    message_id: UUID,
+    paper_id: UUID,
+    session: Session = Depends(get_db_session),
+) -> ConversationSourceChunksResponse:
+    service = ConversationRoomService(session)
+
+    try:
+        message = service.get_conversation_message(
+            room_id=room_id,
+            message_id=message_id,
+        )
+
+    except ConversationNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    if message.role != ConversationMessageRole.ASSISTANT.value:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only assistant messages can have retrieved source chunks.",
+        )
+
+    metadata = message.metadata or {}
+    sources = _metadata_dicts(metadata.get("sources"))
+    citations = _metadata_dicts(metadata.get("citations"))
+    paper_source = _source_for_paper(sources=sources, paper_id=paper_id)
+    paper_citations = _citations_for_paper(citations=citations, paper_id=paper_id)
+
+    if not paper_citations:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No retrieved chunks for this paper are attached to this message.",
+        )
+
+    if paper_source is None:
+        paper_source = paper_citations[0]
+
+    chunk_ids = [
+        chunk_id
+        for citation in paper_citations
+        if (chunk_id := _uuid_value(citation.get("chunk_id"))) is not None
+    ]
+
+    chunks = ChunkRepository(session).list_by_ids(chunk_ids)
+    chunks_by_id = {chunk.id: chunk for chunk in chunks}
+
+    hydrated_chunks: list[ConversationSourceChunkResponse] = []
+    for citation in paper_citations:
+        chunk_id = _uuid_value(citation.get("chunk_id"))
+
+        if chunk_id is None:
+            continue
+
+        chunk = chunks_by_id.get(chunk_id)
+
+        if chunk is None:
+            continue
+
+        hydrated_chunks.append(
+            ConversationSourceChunkResponse(
+                source_number=_optional_int_value(citation.get("source_number")),
+                chunk_id=chunk.id,
+                paper_id=chunk.paper_id,
+                section_title=chunk.section_title,
+                chunk_index=chunk.chunk_index,
+                score=_optional_float_value(citation.get("score")),
+                highlights=_string_list(citation.get("highlights")),
+                text=_chunk_content_text(chunk.text),
+                word_count=chunk.word_count,
+                start_word=chunk.start_word,
+                end_word=chunk.end_word,
+                start_char=chunk.start_char,
+                end_char=chunk.end_char,
+            )
+        )
+
+    return ConversationSourceChunksResponse(
+        paper=ConversationSourcePaperResponse(
+            paper_source_number=_optional_int_value(
+                paper_source.get("paper_source_number")
+            ),
+            paper_id=paper_id,
+            arxiv_id=_optional_string_value(paper_source.get("arxiv_id")),
+            title=_optional_string_value(paper_source.get("title")),
+            authors=_string_list(paper_source.get("authors")),
+            categories=_string_list(paper_source.get("categories")),
+            published_date=_optional_string_value(paper_source.get("published_date")),
+            pdf_url=_optional_string_value(paper_source.get("pdf_url")),
+            citation_numbers=[
+                value
+                for item in _list_value(paper_source.get("citation_numbers"))
+                if (value := _optional_int_value(item)) is not None
+            ],
+        ),
+        chunks=hydrated_chunks,
+    )
+
+
 def _conversation_context_payload(
     messages: list[ConversationMessage],
 ) -> list[dict[str, Any]]:
@@ -517,6 +658,97 @@ def _conversation_context_payload(
         )
 
     return payload
+
+
+def _metadata_dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _source_for_paper(
+    sources: list[dict[str, Any]],
+    paper_id: UUID,
+) -> dict[str, Any] | None:
+    paper_id_text = str(paper_id)
+
+    for source in sources:
+        if str(source.get("paper_id", "")) == paper_id_text:
+            return source
+
+    return None
+
+
+def _citations_for_paper(
+    citations: list[dict[str, Any]],
+    paper_id: UUID,
+) -> list[dict[str, Any]]:
+    paper_id_text = str(paper_id)
+
+    return [
+        citation
+        for citation in citations
+        if str(citation.get("paper_id", "")) == paper_id_text
+    ]
+
+
+def _uuid_value(value: Any) -> UUID | None:
+    if isinstance(value, UUID):
+        return value
+
+    if not isinstance(value, str):
+        return None
+
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
+def _optional_int_value(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float_value(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_string_value(value: Any) -> str | None:
+    if value is None:
+        return None
+
+    text = str(value)
+    return text or None
+
+
+def _list_value(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _string_list(value: Any) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def _chunk_content_text(text: str) -> str:
+    marker = "Content:"
+
+    if marker in text:
+        return text.split(marker, maxsplit=1)[1].strip()
+
+    return text.strip()
 
 
 def _compact_citations(value: Any) -> list[dict[str, Any]]:
@@ -628,3 +860,18 @@ def _derive_room_title(content: str, max_words: int = 7) -> str:
         title = f"{title}..."
 
     return title or "New conversation"
+
+
+def _safe_room_title(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+
+    title = " ".join(value.split()).strip(" .,:;-'\"")
+
+    if not title:
+        return None
+
+    if len(title) > 72:
+        title = title[:72].rstrip()
+
+    return title
