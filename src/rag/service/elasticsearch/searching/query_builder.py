@@ -51,6 +51,22 @@ class ElasticsearchQueryBuilder:
 
         self._validate_filters()
 
+    def _validate_filters(self) -> None:
+        if self.categories is not None:
+            self.categories = [
+                category.strip()
+                for category in self.categories
+                if isinstance(category, str) and category.strip()
+            ]
+
+        if self.paper_id is not None:
+            self.paper_id = self.paper_id.strip()
+            if not self.paper_id:
+                self.paper_id = None
+
+        if self.min_score is not None and self.min_score < 0:
+            raise ValueError("min_score must be greater than or equal to 0")
+
     def bm25(
         self,
         query: str,

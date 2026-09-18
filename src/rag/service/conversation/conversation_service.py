@@ -109,6 +109,29 @@ class ConversationRoomService:
 
         return self._room_from_model(room)
 
+    def get_conversation_message(
+        self,
+        room_id: UUID,
+        message_id: UUID,
+    ) -> ConversationMessage:
+        """
+        Get one message from a conversation room.
+        """
+        if self.repository.get_room_by_id(room_id) is None:
+            raise ConversationNotFoundError(f"Conversation room not found: {room_id}")
+
+        message = self.repository.get_room_message(
+            room_id=room_id,
+            message_id=message_id,
+        )
+
+        if message is None:
+            raise ConversationNotFoundError(
+                f"Conversation message not found: {message_id}"
+            )
+
+        return self._message_from_model(message)
+
     def get_conversation_room_and_messages(
         self,
         room_id: UUID,

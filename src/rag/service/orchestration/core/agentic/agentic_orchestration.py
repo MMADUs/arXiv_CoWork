@@ -57,6 +57,7 @@ class AgenticRAGOrchestrator:
         self,
         request: AgenticRAGRequest,
         status_callback: Callable[[str], Awaitable[None]] | None = None,
+        answer_fragment_callback: Callable[[str], Awaitable[None]] | None = None,
     ) -> AgenticRAGResult:
         thread_id = request.thread_id or str(uuid4())
 
@@ -68,11 +69,13 @@ class AgenticRAGOrchestrator:
         }
 
         self.nodes.status_callback = status_callback
+        self.nodes.answer_fragment_callback = answer_fragment_callback
 
         try:
             final_state = await self.graph.ainvoke(input_state, config=config)
         finally:
             self.nodes.status_callback = None
+            self.nodes.answer_fragment_callback = None
 
         return self._make_result(final_state)
 
@@ -141,6 +144,7 @@ class AgenticRAGOrchestrator:
                 guardrail=state.get("guardrail", {}),
                 evidence_grade=state.get("evidence_grade", {}),
                 rewritten_query=state.get("rewritten_query"),
+                conversation_title=metadata.get("conversation_title"),
                 answer_model=metadata.get("answer_model"),
                 answer_usage=self._usage_from_state(metadata.get("answer_usage")),
                 errors=state.get("errors", []),

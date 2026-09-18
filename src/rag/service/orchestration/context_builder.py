@@ -241,12 +241,20 @@ class ContextBuilder:
         )
 
     def _truncate_text(self, text: str) -> str:
-        normalized = " ".join(text.split())
+        normalized = " ".join(self._content_text(text).split())
 
         if len(normalized) <= self.max_chunk_size:
             return normalized
 
         return normalized[: self.max_chunk_size].rstrip() + "..."
+
+    def _content_text(self, text: str) -> str:
+        marker = "Content:"
+
+        if marker in text:
+            return text.split(marker, maxsplit=1)[1]
+
+        return text
 
     def _would_exceed_context_limit(
         self,

@@ -47,6 +47,7 @@ class AgenticRAGMetadata:
     guardrail: dict[str, Any]
     evidence_grade: dict[str, Any]
     rewritten_query: str | None
+    conversation_title: str | None
     answer_model: str | None
     answer_usage: LLMUsageMetadata | None
     errors: list[str] = field(default_factory=list)
@@ -61,6 +62,7 @@ class AgenticRAGMetadata:
             "guardrail": self.guardrail,
             "evidence_grade": self.evidence_grade,
             "rewritten_query": self.rewritten_query,
+            "conversation_title": self.conversation_title,
             "answer_model": self.answer_model,
             "answer_usage": (
                 None if self.answer_usage is None else asdict(self.answer_usage)

@@ -1,6 +1,7 @@
 # Copyright 2026 Muhammad Nizwa
 # SPDX-License-Identifier: MIT
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from datetime import date
@@ -32,6 +33,9 @@ from rag.service.orchestration.prompt_builder import PromptBuilder
 from rag.service.reranker import RerankerProvider
 
 
+logger = logging.getLogger(__name__)
+
+
 class AgenticRAGNodes:
     def __init__(
         self,
@@ -43,6 +47,7 @@ class AgenticRAGNodes:
         context_builder: ContextBuilder | None = None,
         prompt_builder: PromptBuilder | None = None,
         status_callback: Callable[[str], Awaitable[None]] | None = None,
+        answer_fragment_callback: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.settings = settings
         self.searching_service = searching_service
@@ -52,6 +57,7 @@ class AgenticRAGNodes:
         self.context_builder = context_builder or ContextBuilder()
         self.prompt_builder = prompt_builder or PromptBuilder()
         self.status_callback = status_callback
+        self.answer_fragment_callback = answer_fragment_callback
         self.decision_settings = LLMGenerationSettings(
             temperature=0.0,
             top_p=1.0,
@@ -148,9 +154,16 @@ class AgenticRAGNodes:
                 "reason": str(llm_response.get("reason", fallback["reason"])),
                 "response": llm_response.get("response"),
                 "resolved_query": resolved_query or question,
+                "conversation_title": self._safe_conversation_title(
+                    llm_response.get("conversation_title")
+                ),
             }
 
         except Exception as error:
+            logger.warning(
+                "Agentic scope routing failed; using fallback",
+                exc_info=True,
+            )
             scope = {
                 **fallback,
                 "fallback_error": str(error),
@@ -169,11 +182,21 @@ class AgenticRAGNodes:
                 fallback=self._out_of_scope_response(),
             )
 
+        metadata = state.get("metadata", {})
+        conversation_title = scope.get("conversation_title")
+
+        if conversation_title:
+            metadata = {
+                **metadata,
+                "conversation_title": conversation_title,
+            }
+
         return {
             "scope": scope,
             "answer": answer,
             "resolved_query": str(scope.get("resolved_query") or question),
             "current_query": str(scope.get("resolved_query") or question),
+            "metadata": metadata,
         }
 
     async def retrieve(self, state: AgenticRAGState) -> dict[str, Any]:
@@ -217,6 +240,13 @@ class AgenticRAGNodes:
             }
 
         except Exception as error:
+            logger.warning(
+                "Agentic retrieval failed: query=%r mode=%s attempt=%s",
+                plan["query"],
+                plan["retrieval_mode"],
+                attempts,
+                exc_info=True,
+            )
             errors = list(state.get("errors", []))
             errors.append(f"retrieve failed: {error}")
             return {
@@ -241,6 +271,9 @@ class AgenticRAGNodes:
             }
 
         if self.reranker_provider is None:
+            logger.warning(
+                "Agentic reranker requested but provider is not initialized"
+            )
             errors = list(state.get("errors", []))
             errors.append("reranker requested but provider is not initialized")
             return {
@@ -267,6 +300,10 @@ class AgenticRAGNodes:
             }
 
         except Exception as error:
+            logger.warning(
+                "Agentic reranker failed; using original search order",
+                exc_info=True,
+            )
             errors = list(state.get("errors", []))
             errors.append(f"reranker failed; using original search order: {error}")
             return {
@@ -329,6 +366,10 @@ class AgenticRAGNodes:
                 }
 
             except Exception as error:
+                logger.warning(
+                    "Agentic evidence grading failed; using fallback grade",
+                    exc_info=True,
+                )
                 grade = {**fallback, "fallback_error": str(error)}
 
         return {
@@ -359,6 +400,10 @@ class AgenticRAGNodes:
                 raise ValueError("empty rewritten query")
 
         except Exception:
+            logger.warning(
+                "Agentic query rewrite failed; using fallback query",
+                exc_info=True,
+            )
             query = fallback_query
 
         return {
@@ -417,8 +462,32 @@ class AgenticRAGNodes:
 
         return response
 
+    def _safe_conversation_title(self, value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+
+        title = " ".join(value.split()).strip(" .,:;-'\"")
+
+        if not title:
+            return None
+
+        words = title.split()
+
+        if len(words) > 7:
+            title = " ".join(words[:7])
+
+        if len(title) > 72:
+            title = title[:72].rstrip()
+
+        lowered = title.lower()
+
+        if lowered in {"chat", "conversation", "research discussion"}:
+            return None
+
+        return title
+
     async def answer_generator(self, state: AgenticRAGState) -> dict[str, Any]:
-        await self._emit_status("Thinking...")
+        await self._emit_status("Writing answer...")
 
         context_data = state.get("context", {})
         has_context = bool(str(context_data.get("context_prompt", "")).strip())
@@ -436,19 +505,28 @@ class AgenticRAGNodes:
             conversation_context=state.get("conversation_context", []),
         )
 
-        llm_response = await self.llm_provider.generate(
+        answer_parts: list[str] = []
+
+        async for chunk in self.llm_provider.stream(
             prompt=prompt,
             settings=self.answer_settings,
-        )
+        ):
+            answer_parts.append(chunk)
+            await self._emit_answer_fragment(chunk)
+
+        answer = "".join(answer_parts)
+        usage = getattr(self.llm_provider, "last_stream_usage", None)
 
         metadata = {
             **state.get("metadata", {}),
-            "answer_model": llm_response.model_name,
-            "answer_usage": asdict(llm_response.usage),
+            "answer_model": self.llm_provider.model_name,
         }
 
+        if usage is not None:
+            metadata["answer_usage"] = asdict(usage)
+
         return {
-            "answer": llm_response.response_text,
+            "answer": answer,
             "metadata": metadata,
         }
 
@@ -564,6 +642,10 @@ class AgenticRAGNodes:
     async def _emit_status(self, text: str) -> None:
         if self.status_callback is not None:
             await self.status_callback(text)
+
+    async def _emit_answer_fragment(self, text: str) -> None:
+        if self.answer_fragment_callback is not None:
+            await self.answer_fragment_callback(text)
 
     def _context_from_state(self, data: dict[str, Any]):
         return RetrievalContext(
