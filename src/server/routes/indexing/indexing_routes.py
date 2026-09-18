@@ -3,7 +3,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from rag.db.model import PaperChunkingStatus, PaperIndexingStatus, PaperParserStatus
@@ -13,10 +13,12 @@ from server.dependencies import get_db_session
 from server.routes.indexing.indexing_helpers import (
     enqueue_indexing_by_id,
     enqueue_pending_indexing,
+    preview_pending_indexing,
     queued_index_count,
     skipped_index_count,
 )
 from server.routes.indexing.indexing_schema import (
+    IndexPreviewResponse,
     IndexPaperRequest,
     IndexPaperResponse,
     IndexPapersResponse,
@@ -24,6 +26,38 @@ from server.routes.indexing.indexing_schema import (
 )
 
 router = APIRouter(prefix="/papers", tags=["paper-indexing"])
+
+
+@router.get(
+    "/index/preview",
+    response_model=IndexPreviewResponse,
+)
+def preview_pending_indexing_route(
+    limit: int = Query(default=50, ge=1, le=500),
+    include_failed_chunks: bool = False,
+    force_parse: bool = False,
+    force_chunk: bool = False,
+    force_reindex: bool = False,
+    batch_size: int = Query(default=50, ge=1, le=500),
+    session: Session = Depends(get_db_session),
+) -> IndexPreviewResponse:
+    request = IndexPendingPapersRequest(
+        limit=limit,
+        include_failed_chunks=include_failed_chunks,
+        force_parse=force_parse,
+        force_chunk=force_chunk,
+        force_reindex=force_reindex,
+        batch_size=batch_size,
+    )
+    papers = preview_pending_indexing(
+        request=request,
+        session=session,
+    )
+
+    return IndexPreviewResponse(
+        requested=len(papers),
+        papers=papers,
+    )
 
 
 @router.post(

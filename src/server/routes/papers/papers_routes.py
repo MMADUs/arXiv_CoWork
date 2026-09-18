@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session
 from rag.db.repository import ChunkRepository, PaperRepository
 from server.dependencies import get_db_session
 from server.routes.papers.papers_helpers import build_paper_response
-from server.routes.papers.papers_schema import PaperDetailResponse, PaperListResponse
+from server.routes.papers.papers_schema import (
+    PaperDetailResponse,
+    PaperListResponse,
+    PaperSummaryResponse,
+)
 
 router = APIRouter(prefix="/papers", tags=["manage-paper"])
 
@@ -20,6 +24,26 @@ router = APIRouter(prefix="/papers", tags=["manage-paper"])
 def get_all_papers(
     output: Literal["compact", "full"] = "compact",
     status_filter: Literal["failed"] | None = Query(default=None, alias="status"),
+    q: str | None = Query(default=None, min_length=1, max_length=200),
+    ingestion_status: Literal[
+        "pending",
+        "metadata_fetched",
+        "metadata_failed",
+        "pdf_downloading",
+        "pdf_stored",
+        "pdf_failed",
+    ]
+    | None = None,
+    parser_status: Literal["pending", "parsing", "parsed", "failed"] | None = None,
+    chunking_status: Literal[
+        "pending",
+        "chunking",
+        "chunked",
+        "no_chunks",
+        "failed",
+    ]
+    | None = None,
+    indexing_status: Literal["pending", "indexing", "indexed", "failed"] | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_db_session),
@@ -29,16 +53,16 @@ def get_all_papers(
 
     offset = (page - 1) * page_size
 
-    if status_filter == "failed":
-        papers, total = paper_repository.list_failed_page(
-            limit=page_size,
-            offset=offset,
-        )
-    else:
-        papers, total = paper_repository.list_recent_page(
-            limit=page_size,
-            offset=offset,
-        )
+    papers, total = paper_repository.list_page(
+        limit=page_size,
+        offset=offset,
+        status=status_filter,
+        q=q.strip() if q else None,
+        ingestion_status=ingestion_status,
+        parser_status=parser_status,
+        chunking_status=chunking_status,
+        indexing_status=indexing_status,
+    )
 
     chunk_errors_by_paper_id = {}
 
@@ -65,6 +89,14 @@ def get_all_papers(
             for paper in papers
         ],
     )
+
+
+@router.get("/summary", response_model=PaperSummaryResponse)
+def get_paper_summary(
+    session: Session = Depends(get_db_session),
+) -> PaperSummaryResponse:
+    paper_repository = PaperRepository(session)
+    return PaperSummaryResponse(**paper_repository.summary_counts())
 
 
 @router.get("/{paper_id}", response_model=PaperDetailResponse)

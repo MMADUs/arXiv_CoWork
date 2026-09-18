@@ -108,6 +108,27 @@ def enqueue_pending_indexing(
     return [enqueue_paper(paper=paper, request=request) for paper in papers]
 
 
+def preview_pending_indexing(
+    request: IndexPendingPapersRequest,
+    session: Session,
+) -> list[IndexPaperItem]:
+    paper_repository = PaperRepository(session)
+
+    papers = paper_repository.list_pending_indexing_papers(
+        limit=request.limit,
+        include_failed=request.include_failed_chunks,
+    )
+
+    return [
+        _return_item(
+            paper=paper,
+            task_id=None,
+            status=_preview_status(paper, request),
+        )
+        for paper in papers
+    ]
+
+
 def _return_item(
     paper: PaperModel,
     task_id: str | None,
@@ -123,6 +144,30 @@ def _return_item(
         task_id=task_id,
         status=status,
     )
+
+
+def _preview_status(
+    paper: PaperModel,
+    request: IndexPaperRequest,
+) -> str:
+    if paper.parser_status == PaperParserStatus.PARSING:
+        return "already_parsing"
+
+    if paper.chunking_status == PaperChunkingStatus.CHUNKING:
+        return "already_chunking"
+
+    if paper.indexing_status == PaperIndexingStatus.INDEXING:
+        return "already_indexing"
+
+    if paper.indexing_status == PaperIndexingStatus.INDEXED and not (
+        request.force_parse or request.force_chunk or request.force_reindex
+    ):
+        return "already_indexed"
+
+    if paper.pdf_object_key is None:
+        return "no_pdf"
+
+    return "queued"
 
 
 def queued_index_count(items: list[IndexPaperItem]) -> int:

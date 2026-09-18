@@ -60,6 +60,15 @@ class IndexPapersResponse(BaseModel):
     papers: list[IndexPaperItem]
 
 
+class IndexPreviewResponse(BaseModel):
+    """
+    Route response schema for previewing which papers would be indexed in bulk.
+    """
+
+    requested: int
+    papers: list[IndexPaperItem]
+
+
 class IndexPaperResponse(BaseModel):
     """
     Router response schema for index paper by id result

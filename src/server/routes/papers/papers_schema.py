@@ -118,6 +118,19 @@ class PaperListResponse(BaseModel):
     papers: list[FullPaperFormat | CompactPaperFormat]
 
 
+class PaperSummaryResponse(BaseModel):
+    """
+    Route response schema for paper library summary counts.
+    """
+
+    total: int
+    indexed: int
+    pending_indexing: int
+    failed: int
+    processing: int
+    missing_pdf: int
+
+
 class PaperDetailResponse(BaseModel):
     """
     Route response schema for get paper by id result
