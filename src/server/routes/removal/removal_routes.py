@@ -64,6 +64,23 @@ def delete_paper_metadata_route(
 
 
 @router.delete(
+    "/{paper_id}",
+    response_model=DeletePaperMetadataResponse,
+    status_code=status.HTTP_200_OK,
+)
+def delete_paper_route(
+    paper_id: UUID,
+    session: Session = Depends(get_db_session),
+    storage: StorageProvider = Depends(get_s3_storage),
+) -> DeletePaperMetadataResponse:
+    return delete_paper_metadata_route(
+        paper_id=paper_id,
+        session=session,
+        storage=storage,
+    )
+
+
+@router.delete(
     "/index/{paper_id}",
     response_model=DeletePaperIndexResponse,
     status_code=status.HTTP_200_OK,
@@ -97,3 +114,20 @@ def delete_paper_index_route(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to delete paper index: {error}",
         ) from error
+
+
+@router.delete(
+    "/{paper_id}/index",
+    response_model=DeletePaperIndexResponse,
+    status_code=status.HTTP_200_OK,
+)
+def delete_paper_index_alias_route(
+    paper_id: UUID,
+    session: Session = Depends(get_db_session),
+    elasticsearch_client: ElasticsearchClient = Depends(get_elasticsearch_client),
+) -> DeletePaperIndexResponse:
+    return delete_paper_index_route(
+        paper_id=paper_id,
+        session=session,
+        elasticsearch_client=elasticsearch_client,
+    )
