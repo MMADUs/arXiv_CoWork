@@ -65,22 +65,51 @@ class PaperRepository:
 
         return papers, total
 
-    def list_failed_page(
-        self, limit: int = 50, offset: int = 0
+    def list_page(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        status: str | None = None,
+        q: str | None = None,
+        ingestion_status: str | None = None,
+        parser_status: str | None = None,
+        chunking_status: str | None = None,
+        indexing_status: str | None = None,
     ) -> tuple[list[PaperModel], int]:
-        base_statement = select(PaperModel).where(
-            or_(
-                PaperModel.ingestion_status.in_(
-                    [
-                        PaperIngestionStatus.METADATA_FAILED,
-                        PaperIngestionStatus.PDF_FAILED,
-                    ]
-                ),
-                PaperModel.parser_status == PaperParserStatus.FAILED,
-                PaperModel.chunking_status == PaperChunkingStatus.FAILED,
-                PaperModel.indexing_status == PaperIndexingStatus.FAILED,
+        base_statement = select(PaperModel)
+
+        if status == "failed":
+            base_statement = base_statement.where(self._failed_status_expression())
+
+        if q:
+            query = f"%{q.strip()}%"
+            base_statement = base_statement.where(
+                or_(
+                    PaperModel.title.ilike(query),
+                    PaperModel.arxiv_id.ilike(query),
+                )
             )
-        )
+
+        if ingestion_status:
+            base_statement = base_statement.where(
+                PaperModel.ingestion_status == ingestion_status
+            )
+
+        if parser_status:
+            base_statement = base_statement.where(
+                PaperModel.parser_status == parser_status
+            )
+
+        if chunking_status:
+            base_statement = base_statement.where(
+                PaperModel.chunking_status == chunking_status
+            )
+
+        if indexing_status:
+            base_statement = base_statement.where(
+                PaperModel.indexing_status == indexing_status
+            )
+
         total_statement = select(func.count()).select_from(base_statement.subquery())
         page_statement = (
             base_statement.order_by(
@@ -95,6 +124,87 @@ class PaperRepository:
         total = self.session.scalar(total_statement) or 0
 
         return papers, total
+
+    def list_failed_page(
+        self, limit: int = 50, offset: int = 0
+    ) -> tuple[list[PaperModel], int]:
+        base_statement = select(PaperModel).where(self._failed_status_expression())
+        total_statement = select(func.count()).select_from(base_statement.subquery())
+        page_statement = (
+            base_statement.order_by(
+                PaperModel.updated_at.desc(),
+                PaperModel.published_date.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+
+        papers = list(self.session.scalars(page_statement))
+        total = self.session.scalar(total_statement) or 0
+
+        return papers, total
+
+    def summary_counts(self) -> dict[str, int]:
+        failed_expression = self._failed_status_expression()
+        processing_expression = or_(
+            PaperModel.ingestion_status == PaperIngestionStatus.PDF_DOWNLOADING,
+            PaperModel.parser_status == PaperParserStatus.PARSING,
+            PaperModel.chunking_status == PaperChunkingStatus.CHUNKING,
+            PaperModel.indexing_status == PaperIndexingStatus.INDEXING,
+        )
+
+        total = self.session.scalar(select(func.count()).select_from(PaperModel)) or 0
+        indexed = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(PaperModel)
+                .where(PaperModel.indexing_status == PaperIndexingStatus.INDEXED)
+            )
+            or 0
+        )
+        pending_indexing = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(PaperModel)
+                .where(PaperModel.pdf_object_key.is_not(None))
+                .where(PaperModel.indexing_status == PaperIndexingStatus.PENDING)
+                .where(PaperModel.chunking_status != PaperChunkingStatus.NO_CHUNKS)
+                .where(PaperModel.parser_status != PaperParserStatus.FAILED)
+                .where(PaperModel.chunking_status != PaperChunkingStatus.FAILED)
+            )
+            or 0
+        )
+        failed = (
+            self.session.scalar(
+                select(func.count()).select_from(PaperModel).where(failed_expression)
+            )
+            or 0
+        )
+        processing = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(PaperModel)
+                .where(processing_expression)
+            )
+            or 0
+        )
+        missing_pdf = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(PaperModel)
+                .where(PaperModel.pdf_object_key.is_(None))
+            )
+            or 0
+        )
+
+        return {
+            "total": total,
+            "indexed": indexed,
+            "pending_indexing": pending_indexing,
+            "failed": failed,
+            "processing": processing,
+            "missing_pdf": missing_pdf,
+        }
 
     def upsert_from_arxiv(self, arxiv_paper: ArxivPaperMetadata) -> PaperModel:
         """
@@ -154,6 +264,19 @@ class PaperRepository:
     def _fallback_pdf_url(self, arxiv_id: str) -> str:
         # arxiv_id is always cleaned from version, see: `ArxivClient` class
         return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+
+    def _failed_status_expression(self):
+        return or_(
+            PaperModel.ingestion_status.in_(
+                [
+                    PaperIngestionStatus.METADATA_FAILED,
+                    PaperIngestionStatus.PDF_FAILED,
+                ]
+            ),
+            PaperModel.parser_status == PaperParserStatus.FAILED,
+            PaperModel.chunking_status == PaperChunkingStatus.FAILED,
+            PaperModel.indexing_status == PaperIndexingStatus.FAILED,
+        )
 
     def mark_pdf_stored(self, paper: PaperModel, pdf_object_key: str) -> PaperModel:
         """

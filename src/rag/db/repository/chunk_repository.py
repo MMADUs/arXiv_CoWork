@@ -38,6 +38,15 @@ class ChunkRepository:
         )
         return list(self.session.scalars(statement))
 
+    def list_by_ids(self, chunk_ids: Iterable[UUID]) -> list[ChunkModel]:
+        chunk_id_list = list(dict.fromkeys(chunk_ids))
+
+        if not chunk_id_list:
+            return []
+
+        statement = select(ChunkModel).where(ChunkModel.id.in_(chunk_id_list))
+        return list(self.session.scalars(statement))
+
     def count_by_paper_id(self, paper_id: UUID) -> int:
         statement = select(func.count()).select_from(
             select(ChunkModel.id)
