@@ -53,16 +53,16 @@ services:
       retries: 20
       start_period: 30s
  
-  kibana:
-    image: kibana:9.4.3
-    container_name: rag-kibana
-    environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
-    ports:
-      - "5601:5601"
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
+  # kibana:
+  #   image: kibana:9.4.3
+  #   container_name: rag-kibana
+  #   environment:
+  #     ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+  #   ports:
+  #     - "5601:5601"
+  #   depends_on:
+  #     elasticsearch:
+  #       condition: service_healthy
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine

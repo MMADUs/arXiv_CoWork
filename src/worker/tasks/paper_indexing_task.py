@@ -7,7 +7,15 @@ from uuid import UUID
 from celery import Task
 
 from rag.db.repository import PaperRepository
-from rag.service.elasticsearch import ChunkIndexingService
+from rag.service.embedding import (
+    EmbeddingNonRetryableError,
+    EmbeddingRetryableError,
+)
+from rag.service.elasticsearch import (
+    ChunkIndexingService,
+    ElasticsearchNonRetryableError,
+    ElasticsearchRetryableError,
+)
 from worker.celery_app import celery_app, INDEXING_ROUTE
 from worker.queue_schema import IndexingQueue
 from worker.instances import get_indexing_session, worker_async_run, get_db_session
@@ -33,6 +41,40 @@ def paper_indexing_task_route(self: Task, payload: dict[str, Any]) -> dict[str, 
     except ValueError as error:
         _mark_paper_indexing_failed(task_payload.paper_id, str(error))
         raise error
+
+    except EmbeddingNonRetryableError as error:
+        _mark_paper_indexing_failed(task_payload.paper_id, str(error))
+        raise
+
+    except EmbeddingRetryableError as error:
+        retry_error = RetryableStageError(str(error))
+
+        retry_or_fail(
+            self,
+            retry_error,
+            lambda: _mark_paper_indexing_failed(
+                task_payload.paper_id,
+                str(retry_error),
+            ),
+        )
+        raise
+
+    except ElasticsearchNonRetryableError as error:
+        _mark_paper_indexing_failed(task_payload.paper_id, str(error))
+        raise
+
+    except ElasticsearchRetryableError as error:
+        retry_error = RetryableStageError(str(error))
+
+        retry_or_fail(
+            self,
+            retry_error,
+            lambda: _mark_paper_indexing_failed(
+                task_payload.paper_id,
+                str(retry_error),
+            ),
+        )
+        raise
 
     except Exception as error:
         retry_error = RetryableStageError(str(error))
@@ -96,15 +138,17 @@ async def _index_paper_chunks(
         }
 
         if task_payload.force_reindex:
-            result = await chunk_indexing_service.reindex_paper(task_payload.paper_id)
+            result = await chunk_indexing_service.reindex_paper_by_id(
+                task_payload.paper_id
+            )
 
             return {
                 **metadata,
                 "batches": 1,
-                "requested_chunks": result["chunks_requested"],
-                "indexed_chunks": result["chunks_indexed"],
-                "failed_chunks": result["chunks_failed"],
-                "errors": result["errors"],
+                "requested_chunks": result.requested_chunks,
+                "indexed_chunks": result.indexed_chunks,
+                "failed_chunks": result.failed_chunks,
+                "errors": {str(key): value for key, value in result.errors.items()},
                 "force_reindex": True,
             }
 
@@ -115,7 +159,7 @@ async def _index_paper_chunks(
         errors: dict[str, str] = {}
 
         while True:
-            result = await chunk_indexing_service.index_pending_chunks(
+            result = await chunk_indexing_service.index_chunks_by_paper_id(
                 paper_id=task_payload.paper_id,
                 limit=task_payload.batch_size,  # ok we somehow treat limit as batch, maybe make the docs soon
                 include_failed=include_failed_chunks,
