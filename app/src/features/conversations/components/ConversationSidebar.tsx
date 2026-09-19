@@ -1,6 +1,15 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Check, MoreHorizontal, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  BookOpen,
+  Check,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import type { ConversationRoom } from "../model/types";
 
@@ -79,6 +88,15 @@ export function ConversationSidebar({
         <Plus size={16} />
         New chat
       </button>
+
+      <Link className="sidebar-library-link" to="/library">
+        <BookOpen size={16} />
+        Library
+      </Link>
+      <Link className="sidebar-library-link" to="/search">
+        <Search size={16} />
+        Search papers
+      </Link>
 
       <div className="sidebar-section-label">
         <span>Recent</span>

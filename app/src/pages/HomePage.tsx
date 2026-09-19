@@ -1,4 +1,12 @@
-import { ArrowRight, MessageSquareText, Moon, Plus, Sun } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  MessageSquareText,
+  Moon,
+  Plus,
+  Search,
+  Sun,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { listConversationRooms } from "../features/conversations/api/conversations";
@@ -22,6 +30,14 @@ export function HomePage() {
         </Link>
         <nav className="home-nav" aria-label="Primary navigation">
           <Link to="/chat">Chat</Link>
+          <Link to="/library">
+            <BookOpen size={15} />
+            Library
+          </Link>
+          <Link to="/search">
+            <Search size={15} />
+            Search
+          </Link>
           <button
             className="icon-button"
             type="button"
@@ -44,6 +60,14 @@ export function HomePage() {
           <Link className="home-primary-action" to="/chat">
             <Plus size={17} />
             New conversation
+          </Link>
+          <Link className="home-secondary-action" to="/library">
+            <BookOpen size={17} />
+            Open library
+          </Link>
+          <Link className="home-secondary-action" to="/search">
+            <Search size={17} />
+            Search papers
           </Link>
         </div>
 

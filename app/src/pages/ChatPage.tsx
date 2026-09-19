@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { Menu, Moon, PanelRight, Sun } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ChatThread } from "../features/conversations/components/ChatThread";
@@ -15,6 +16,7 @@ export function ChatPage() {
   const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
+  const [sourcePanelWidth, setSourcePanelWidth] = useState(348);
   const [retrievalSettingsOpen, setRetrievalSettingsOpen] = useState(false);
   const conversation = useConversationChat({
     roomId,
@@ -36,9 +38,47 @@ export function ChatPage() {
     navigate("/chat");
   }
 
+  function startSourceResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    const updateWidth = (clientX: number) => {
+      const sidebarWidth = window.innerWidth > 1180 ? 264 : 0;
+      const minChatWidth = 520;
+      const minSourceWidth = 300;
+      const maxSourceWidth = Math.max(
+        minSourceWidth,
+        Math.min(760, window.innerWidth - sidebarWidth - minChatWidth),
+      );
+      const nextWidth = window.innerWidth - clientX;
+      setSourcePanelWidth(
+        Math.min(maxSourceWidth, Math.max(minSourceWidth, nextWidth)),
+      );
+    };
+
+    updateWidth(event.clientX);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      updateWidth(moveEvent.clientX);
+    };
+    const handlePointerUp = () => {
+      document.body.classList.remove("resizing-source-panel");
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+
+    document.body.classList.add("resizing-source-panel");
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp, { once: true });
+  }
+
   return (
     <main
       className={`app-shell ${sidebarOpen ? "sidebar-open" : ""} ${sourcePanelOpen ? "sources-open" : ""}`}
+      style={
+        {
+          "--source-panel-width": `${sourcePanelWidth}px`,
+        } as CSSProperties
+      }
     >
       {(sidebarOpen || sourcePanelOpen) && (
         <button
@@ -133,6 +173,17 @@ export function ChatPage() {
           onStop={conversation.stopGeneration}
         />
       </section>
+
+      <div
+        className="source-resizer"
+        role="separator"
+        aria-label="Resize sources panel"
+        aria-orientation="vertical"
+        aria-valuemin={300}
+        aria-valuemax={760}
+        aria-valuenow={sourcePanelWidth}
+        onPointerDown={startSourceResize}
+      />
 
       <SourcePanel
         message={conversation.selectedMessage}

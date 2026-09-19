@@ -4,6 +4,7 @@ import type {
   ConversationRoomList,
   MessageRetrievalFilters,
   RetrievalConfig,
+  SourceChunksResponse,
   StreamEvent,
 } from "../model/types";
 import { api } from "../../../shared/api/client";
@@ -43,6 +44,21 @@ export async function updateConversationRoom({
     {
       title,
     },
+  );
+  return response.data;
+}
+
+export async function getMessageSourceChunks({
+  roomId,
+  messageId,
+  paperId,
+}: {
+  roomId: string;
+  messageId: string;
+  paperId: string;
+}) {
+  const response = await api.get<SourceChunksResponse>(
+    `/conversation-rooms/${roomId}/messages/${messageId}/sources/${paperId}/chunks`,
   );
   return response.data;
 }

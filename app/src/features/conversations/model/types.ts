@@ -90,6 +90,27 @@ export type SourceBlock = {
   highlights?: string[];
 };
 
+export type SourceChunk = {
+  source_number?: number | null;
+  chunk_id: string;
+  paper_id: string;
+  section_title?: string | null;
+  chunk_index: number;
+  score?: number | null;
+  highlights: string[];
+  text: string;
+  word_count: number;
+  start_word: number;
+  end_word: number;
+  start_char: number;
+  end_char: number;
+};
+
+export type SourceChunksResponse = {
+  paper: SourceBlock;
+  chunks: SourceChunk[];
+};
+
 export type ConversationMessage = {
   message_id: string;
   room_id: string;
