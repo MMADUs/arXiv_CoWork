@@ -18,7 +18,6 @@ from rag.service.embedding.config.embedding_factory import create_embedding
 from rag.service.llm.llm_factory import create_llm_provider
 from rag.service.storage import create_s3_storage
 
-from server.routes.agentic_ask import router as agentic_ask_router
 from server.routes.conversation import router as conversation_router
 from server.routes.direct_ask import router as direct_ask_router
 from server.routes.health import router as health_router
@@ -26,6 +25,7 @@ from server.routes.indexing import router as indexing_router
 from server.routes.ingestion import router as ingest_router
 from server.routes.papers import router as paper_router
 from server.routes.removal import router as removal_router
+from server.routes.tasks import router as tasks_router
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +101,9 @@ def create_app() -> FastAPI:
     app.include_router(router=indexing_router, prefix=settings.api_prefix)
     app.include_router(router=removal_router, prefix=settings.api_prefix)
     app.include_router(router=direct_ask_router, prefix=settings.api_prefix)
-    app.include_router(router=agentic_ask_router, prefix=settings.api_prefix)
     app.include_router(router=conversation_router, prefix=settings.api_prefix)
     app.include_router(router=health_router, prefix=settings.api_prefix)
+    app.include_router(router=tasks_router, prefix=settings.api_prefix)
 
     return app
 
